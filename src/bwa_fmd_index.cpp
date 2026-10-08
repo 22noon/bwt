@@ -3,6 +3,7 @@
 #include <stdexcept>
 
 namespace {
+
 Interval from_bwa_primary(const bwtintv_t& v)
 {
     return Interval{
@@ -31,12 +32,76 @@ bwtintv_t to_bwa(const SA_Range& r)
     v.info = 0;
     return v;
 }
+
+/*
+ * For a singleton FMD interval, bwt_extend() reduces to one BWT
+ * character test plus the corresponding C-array/rank calculation.
+ *
+ * BWA's bwt_2occ4() uses inclusive Occ endpoints:
+ *
+ *     tk = Occ(*, l - 1)
+ *     tl = Occ(*, l)
+ *
+ * Therefore tl[c] - tk[c] is exactly the number of occurrences of
+ * character c in the singleton row.
+ */
+bool singleton_extension_sizes(
+    const bwt_t* bwt,
+    bwtint_t l,
+    bwtint_t size[4])
+{
+    bwtint_t tk[4], tl[4];
+
+    /*
+     * l == 0 gives l - 1 == UINT64_MAX, which is BWA's
+     * representation of -1 and is explicitly handled by bwt_occ4().
+     */
+    bwt_2occ4(
+        bwt,
+        l - 1,
+        l,
+        tk,
+        tl);
+
+    for (int c = 0; c < 4; ++c)
+        size[c] = tl[c] - tk[c];
+
+    return true;
+}
+
+/*
+ * Reproduce the x[is_back] boundary construction in bwt_extend():
+ *
+ *   ok[3].x[is_back] = old_x[is_back] + contains_dollar;
+ *   ok[2] = ok[3] + size[3];
+ *   ok[1] = ok[2] + size[2];
+ *   ok[0] = ok[1] + size[1];
+ *
+ * Thus the start of the child interval for base c is:
+ *
+ *   old_start + contains_dollar + sum(size[j], j > c)
+ */
+bwtint_t child_start(
+    bwtint_t old_start,
+    bwtint_t contains_dollar,
+    const bwtint_t size[4],
+    uint8_t c)
+{
+    bwtint_t start = old_start + contains_dollar;
+
+    for (int j = 3; j > static_cast<int>(c); --j)
+        start += size[j];
+
+    return start;
+}
+
 } // namespace
 
 SA_Range BwaFMDIndex::initial_range(uint8_t c) const
 {
     if (c > 3)
-        throw std::invalid_argument("BwaFMDIndex::initial_range: base must be 0..3");
+        throw std::invalid_argument(
+            "BwaFMDIndex::initial_range: base must be 0..3");
 
     bwtintv_t v{};
     bwt_set_intv(bwt_, c, v);
@@ -56,7 +121,8 @@ SA_Range BwaFMDIndex::extend_all_one(
             "BwaFMDIndex extension requires a bidirectional/FMD range");
 
     if (c > 3)
-        throw std::invalid_argument("BwaFMDIndex extension: base must be 0..3");
+        throw std::invalid_argument(
+            "BwaFMDIndex extension: base must be 0..3");
 
     bwtintv_t ik = to_bwa(range);
     bwtintv_t ok[4]{};
@@ -65,13 +131,12 @@ SA_Range BwaFMDIndex::extend_all_one(
      * BWA convention:
      *
      *   is_back = 1:
-     *       extend the logical pattern to the LEFT.
+     *       logical left extension.
      *
      *   is_back = 0:
-     *       extend the logical pattern to the RIGHT.
+     *       logical right extension.
      *
-     * bwt_extend() also performs the required complement handling
-     * for the paired FMD interval.
+     * bwt_extend() handles the paired FMD interval internally.
      */
     bwt_extend(bwt_, &ik, ok, is_back);
 
@@ -154,21 +219,45 @@ bool BwaFMDIndex::extend_left_singleton(
     const auto p = range.primary_interval();
     const auto q = range.companion_interval();
 
-    const bwtint_t l = static_cast<bwtint_t>(p.l);
+    const bwtint_t primary = static_cast<bwtint_t>(p.l);
+    const bwtint_t companion = static_cast<bwtint_t>(q.l);
 
-    // The BWT character at the unique primary row must be c.
-    if (bwt_B0(bwt_, l) != c)
+    bwtint_t size[4];
+    singleton_extension_sizes(bwt_, primary, size);
+
+    /*
+     * For left extension, bwt_extend(..., is_back=1) calculates
+     * the new primary interval from Occ on the primary side.
+     */
+    if (size[c] != 1)
         return false;
 
-    const bwtint_t new_l =
-        bwt_->L2[c] + 1 + bwt_occ(bwt_, l, c);
+    const bwtint_t new_primary =
+        bwt_->L2[c] + 1 + bwt_occ(
+            bwt_,
+            primary == 0 ? (bwtint_t)-1 : primary - 1,
+            c);
+
+    /*
+     * The companion start is the corresponding cumulative boundary.
+     * The '$' row contributes one to the boundary if the primary
+     * interval contains bwt->primary.
+     */
+    const bwtint_t contains_dollar =
+        (primary <= bwt_->primary && bwt_->primary <= primary) ? 1 : 0;
+
+    const bwtint_t new_companion =
+        child_start(companion, contains_dollar, size, c);
 
     out = SA_Range::bidirectional(
         Interval{
-            static_cast<uint64_t>(new_l),
-            static_cast<uint64_t>(new_l + 1)
+            static_cast<uint64_t>(new_primary),
+            static_cast<uint64_t>(new_primary + 1)
         },
-        q);
+        Interval{
+            static_cast<uint64_t>(new_companion),
+            static_cast<uint64_t>(new_companion + 1)
+        });
 
     return true;
 }
@@ -193,21 +282,42 @@ bool BwaFMDIndex::extend_right_singleton(
     const auto p = range.primary_interval();
     const auto q = range.companion_interval();
 
-    const bwtint_t l = static_cast<bwtint_t>(q.l);
-    const uint8_t rc = static_cast<uint8_t>(3 - c);
+    const bwtint_t primary = static_cast<bwtint_t>(p.l);
+    const bwtint_t companion = static_cast<bwtint_t>(q.l);
 
-    // RC(c) must occur immediately before RC(P) in the BWT sense.
-    if (bwt_B0(bwt_, l) != rc)
+    bwtint_t size[4];
+    singleton_extension_sizes(bwt_, companion, size);
+
+    /*
+     * For right extension, bwt_extend(..., is_back=0) calculates
+     * the new companion interval from Occ on the companion side.
+     */
+    if (size[c] != 1)
         return false;
 
-    const bwtint_t new_l =
-        bwt_->L2[rc] + 1 + bwt_occ(bwt_, l, rc);
+    const bwtint_t new_companion =
+        bwt_->L2[c] + 1 + bwt_occ(
+            bwt_,
+            companion == 0 ? (bwtint_t)-1 : companion - 1,
+            c);
+
+    /*
+     * The primary start is the corresponding cumulative boundary.
+     */
+    const bwtint_t contains_dollar =
+        (companion <= bwt_->primary && bwt_->primary <= companion) ? 1 : 0;
+
+    const bwtint_t new_primary =
+        child_start(primary, contains_dollar, size, c);
 
     out = SA_Range::bidirectional(
-        p,
         Interval{
-            static_cast<uint64_t>(new_l),
-            static_cast<uint64_t>(new_l + 1)
+            static_cast<uint64_t>(new_primary),
+            static_cast<uint64_t>(new_primary + 1)
+        },
+        Interval{
+            static_cast<uint64_t>(new_companion),
+            static_cast<uint64_t>(new_companion + 1)
         });
 
     return true;
