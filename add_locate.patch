@@ -1,0 +1,137 @@
+*** Begin Patch
+*** Update File: include/bwa_fmd_index.hpp
+@@
+ #include "sa_range.hpp"
++
++#include <vector>
+@@
+     /*
+      * Direct access for integration with the existing BWA API.
+      */
+     const bwt_t* bwt() const noexcept { return bwt_; }
++
++    /*
++     * Locate every suffix-array row in the primary interval.
++     *
++     * The returned values are SA coordinates in BWA's indexed text
++     * (reference + reverse complement). The order is the same as the
++     * rows in the primary interval.
++     *
++     * Requires the BWA sampled suffix array to have been restored.
++     */
++    std::vector<uint64_t> locate(const SA_Range& range) const;
+*** Update File: src/bwa_fmd_index.cpp
+@@
+ bool BwaFMDIndex::extend_right_singleton(
+@@
+     return true;
+ }
++
++std::vector<uint64_t> BwaFMDIndex::locate(const SA_Range& range) const
++{
++    if (!range.is_bidirectional())
++        throw std::logic_error(
++            "BwaFMDIndex::locate requires a bidirectional/FMD range");
++
++    if (!bwt_->sa || bwt_->sa_intv <= 0)
++        throw std::logic_error(
++            "BwaFMDIndex::locate requires the BWA suffix array to be restored");
++
++    const auto p = range.primary_interval();
++    const bwtint_t l = static_cast<bwtint_t>(p.l);
++    const bwtint_t r = static_cast<bwtint_t>(p.r);
++
++    std::vector<uint64_t> positions;
++    positions.reserve(static_cast<size_t>(r - l));
++
++    for (bwtint_t k = l; k < r; ++k)
++        positions.push_back(static_cast<uint64_t>(bwt_sa(bwt_, k)));
++
++    return positions;
++}
+*** Add File: tests/test_bwa_locate.cpp
++#include "bwa_fmd_index.hpp"
++
++#include <cassert>
++#include <iostream>
++#include <string>
++#include <vector>
++
++namespace {
++
++uint8_t base_code(char c)
++{
++    switch (c) {
++    case 'A': return 0;
++    case 'C': return 1;
++    case 'G': return 2;
++    case 'T': return 3;
++    default: throw std::invalid_argument("invalid DNA base");
++    }
++}
++
++SA_Range extend_right_string(
++    const BwaFMDIndex& index,
++    const std::string& pattern)
++{
++    assert(!pattern.empty());
++
++    SA_Range range = index.initial_range(base_code(pattern[0]));
++    for (size_t i = 1; i < pattern.size(); ++i)
++        range = index.extend_right(range, base_code(pattern[i]));
++    return range;
++}
++
++void assert_equal(
++    const std::vector<uint64_t>& actual,
++    const std::vector<uint64_t>& expected)
++{
++    assert(actual == expected);
++}
++
++} // namespace
++
++int main(int argc, char** argv)
++{
++    if (argc != 3) {
++        std::cerr
++            << "usage: " << argv[0]
++            << " <index.bwt> <index.sa>\n";
++        return 2;
++    }
++
++    bwt_t* bwt = bwt_restore_bwt(argv[1]);
++    assert(bwt != nullptr);
++    bwt_restore_sa(argv[2], bwt);
++
++    BwaFMDIndex index(bwt);
++
++    /* Reference used to build this BWA index: ACGTTGCA.
++     * BWA's indexed text is ACGTTGCA + TGCAACGT.
++     */
++    {
++        const auto range = index.initial_range(base_code('A'));
++        assert(range.size() == 4);
++        assert_equal(index.locate(range), {11, 12, 0, 7});
++    }
++
++    /* ACG occurs at positions 0 and 11 in the combined FMD text. */
++    {
++        const auto range = extend_right_string(index, "ACG");
++        assert(range.size() == 2);
++        assert_equal(index.locate(range), {11, 0});
++    }
++
++    /* The original reference occurs once, at position 0. */
++    {
++        const auto range = extend_right_string(index, "ACGTTGCA");
++        assert(range.size() == 1);
++        assert_equal(index.locate(range), {0});
++    }
++
++    bwt_destroy(bwt);
++
++    std::cout << "BWA locate tests passed\n";
++    return 0;
++}
+*** End Patch

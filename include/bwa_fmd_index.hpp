@@ -5,6 +5,8 @@ extern "C" {
 }
 
 #include "sa_range.hpp"
+#include <vector>
+#include "sa_range.hpp"
 
 class BwaFMDIndex {
 public:
@@ -62,6 +64,19 @@ public:
 
     bool extend_left_singleton( const SA_Range& range, uint8_t c, SA_Range& out) const;
     bool extend_right_singleton( const SA_Range& range, uint8_t c, SA_Range& out) const;
+
+    /*
+     * Locate every suffix-array row in the primary interval.
+     *
+     * The returned positions are SA coordinates in BWA's indexed text
+     * (reference + reverse complement), in the same order as the rows
+     * in the primary interval.
+     *
+     * Requires the BWA sampled suffix array to have been restored.
+     */
+    std::vector<uint64_t> locate(
+        const SA_Range& range) const;
+    
 
 private:
     const bwt_t* bwt_;

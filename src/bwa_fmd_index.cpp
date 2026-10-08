@@ -1,6 +1,7 @@
 #include "bwa_fmd_index.hpp"
 
 #include <stdexcept>
+#include <vector>
 
 namespace {
 
@@ -277,4 +278,36 @@ bool BwaFMDIndex::extend_right_singleton(
         });
 
     return true;
+}
+
+std::vector<uint64_t> BwaFMDIndex::locate(
+    const SA_Range& range) const
+{
+    if (!range.is_bidirectional())
+        throw std::logic_error(
+            "BwaFMDIndex::locate requires a bidirectional/FMD range");
+
+    /*
+     * bwt_restore_sa() must have been called before locate().
+     */
+    if (!bwt_->sa || bwt_->sa_intv <= 0)
+        throw std::logic_error(
+            "BwaFMDIndex::locate requires the BWA suffix array "
+            "to be restored");
+
+    const auto p = range.primary_interval();
+
+    const bwtint_t l =
+        static_cast<bwtint_t>(p.l);
+    const bwtint_t r =
+        static_cast<bwtint_t>(p.r);
+
+    std::vector<uint64_t> positions;
+    positions.reserve(static_cast<size_t>(r - l));
+
+    for (bwtint_t k = l; k < r; ++k)
+        positions.push_back(
+            static_cast<uint64_t>(bwt_sa(bwt_, k)));
+
+    return positions;
 }
