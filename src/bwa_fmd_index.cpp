@@ -95,7 +95,7 @@ SA_Range BwaFMDIndex::extend_right(
     const SA_Range& range,
     uint8_t c) const
 {
-    return extend_all_one(range, c, 0);
+    return extend_all_one(range, static_cast<uint8_t>(3 - c), 0);
 }
 
 void BwaFMDIndex::extend_left_all(
@@ -246,19 +246,20 @@ bool BwaFMDIndex::extend_right_singleton(
     const uint8_t bwt_c =
         static_cast<uint8_t>(bwt_B0(bwt_, packed_companion));
 
-    if (bwt_c != c)
+    if (bwt_c != static_cast<uint8_t>(3 - c))
         return false;
 
     /*
      * bwt_occ() is inclusive, so the occurrence count must end at
      * companion - 1.
      */
+    const uint8_t fmd_c = static_cast<uint8_t>(3 - c);
+
     const bwtint_t new_companion =
-        bwt_->L2[c] + 1 + bwt_occ(
+        bwt_->L2[fmd_c] + 1 + bwt_occ(
             bwt_,
             companion == 0 ? (bwtint_t)-1 : companion - 1,
-            c);
-
+            fmd_c);
     /*
      * The same singleton simplification applies to the paired primary
      * boundary.  The '$' row was rejected above, so its correction is
