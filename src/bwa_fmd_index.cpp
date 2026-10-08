@@ -3,6 +3,7 @@
 #include <stdexcept>
 
 namespace {
+
 Interval from_bwa_primary(const bwtintv_t& v)
 {
     return Interval{
@@ -32,36 +33,13 @@ bwtintv_t to_bwa(const SA_Range& r)
     return v;
 }
 
-// Return the BWT character at a logical BWA BWT row.
-// BWA's packed BWT omits the '$' row, which is represented by
-// bwt->primary, so logical rows after primary need their packed
-// index decremented by one.
-bool bwt_char_at(const bwt_t* bwt, bwtint_t k, uint8_t& c)
-{
-    if (k == bwt->primary)
-        return false; // '$' row has no nucleotide BWT character
-
-    const bwtint_t packed_k = k - (k > bwt->primary);
-    c = static_cast<uint8_t>(bwt_B0(bwt, packed_k));
-    return true;
-}
-
-// LF mapping for a logical BWT row containing character c.
-// bwt_occ() is inclusive, so Occ(c, k-1) gives the number of c's
-// strictly before row k.
-bwtint_t lf(const bwt_t* bwt, bwtint_t k, uint8_t c)
-{
-    const bwtint_t occ =
-        bwt_occ(bwt, k == 0 ? static_cast<bwtint_t>(-1) : k - 1, c);
-
-    return bwt->L2[c] + 1 + occ;
-}
 } // namespace
 
 SA_Range BwaFMDIndex::initial_range(uint8_t c) const
 {
     if (c > 3)
-        throw std::invalid_argument("BwaFMDIndex::initial_range: base must be 0..3");
+        throw std::invalid_argument(
+            "BwaFMDIndex::initial_range: base must be 0..3");
 
     bwtintv_t v{};
     bwt_set_intv(bwt_, c, v);
@@ -81,7 +59,8 @@ SA_Range BwaFMDIndex::extend_all_one(
             "BwaFMDIndex extension requires a bidirectional/FMD range");
 
     if (c > 3)
-        throw std::invalid_argument("BwaFMDIndex extension: base must be 0..3");
+        throw std::invalid_argument(
+            "BwaFMDIndex extension: base must be 0..3");
 
     bwtintv_t ik = to_bwa(range);
     bwtintv_t ok[4]{};
@@ -90,13 +69,12 @@ SA_Range BwaFMDIndex::extend_all_one(
      * BWA convention:
      *
      *   is_back = 1:
-     *       extend the logical pattern to the LEFT.
+     *       logical left extension.
      *
      *   is_back = 0:
-     *       extend the logical pattern to the RIGHT.
+     *       logical right extension.
      *
-     * bwt_extend() updates both the primary and paired FMD intervals.
-     * The paired interval is maintained by BWA's FMD representation.
+     * bwt_extend() handles the paired FMD interval internally.
      */
     bwt_extend(bwt_, &ik, ok, is_back);
 
@@ -178,25 +156,46 @@ bool BwaFMDIndex::extend_left_singleton(
 
     const auto p = range.primary_interval();
     const auto q = range.companion_interval();
-    const bwtint_t l = static_cast<bwtint_t>(p.l);
 
-    // For BWA's bwt_extend(..., is_back=1), a singleton can only
-    // produce a non-empty child for the character stored in the BWT
-    // at the unique primary row.
+    const bwtint_t primary = static_cast<bwtint_t>(p.l);
+    const bwtint_t companion = static_cast<bwtint_t>(q.l);
+
+    /*
+     * For a singleton, the primary-side BWT interval contains exactly
+     * one row.  The requested extension therefore either succeeds with
+     * one row or fails.  Check that row directly.
+     */
     uint8_t bwt_c = 0;
-    if (!bwt_char_at(bwt_, l, bwt_c) || bwt_c != c)
+    if (primary == bwt_->primary)
+        return false; // The BWT row at '$' has no nucleotide character.
+
+    const bwtint_t packed_primary =
+        primary - (primary > bwt_->primary);
+    bwt_c = static_cast<uint8_t>(bwt_B0(bwt_, packed_primary));
+
+    if (bwt_c != c)
         return false;
 
-    // Primary interval: LF maps the unique row containing c.
-    const bwtint_t new_primary = lf(bwt_, l, c);
+    /*
+     * Left extension uses LF on the primary interval.  bwt_occ() is
+     * inclusive, so the occurrence count must end at primary - 1.
+     */
+    const bwtint_t new_primary =
+        bwt_->L2[c] + 1 + bwt_occ(
+            bwt_,
+            primary == 0 ? (bwtint_t)-1 : primary - 1,
+            c);
 
-    // Companion interval: reproduce bwt_extend()'s x[is_back] boundary
-    // calculation. For a singleton only one child has size 1, namely c.
-    // Therefore no other alphabet bucket contributes to the start of c.
-    const bwtint_t crosses_dollar =
-        (p.l <= bwt_->primary && p.l + 1 - 1 >= bwt_->primary) ? 1 : 0;
-    const bwtint_t new_companion =
-        static_cast<bwtint_t>(q.l) + crosses_dollar;
+    /*
+     * The general bwt_extend() boundary is
+     *
+     *     old_start + contains_dollar + sum(size[j], j > c).
+     *
+     * Here the extension succeeded from a singleton, so the selected
+     * child has size 1 and every other child has size 0.  The '$' row
+     * was rejected above, so contains_dollar is also zero.
+     */
+    const bwtint_t new_companion = companion;
 
     out = SA_Range::bidirectional(
         Interval{
@@ -230,24 +229,42 @@ bool BwaFMDIndex::extend_right_singleton(
 
     const auto p = range.primary_interval();
     const auto q = range.companion_interval();
-    const bwtint_t l = static_cast<bwtint_t>(q.l);
 
-    // For BWA's bwt_extend(..., is_back=0), a singleton can only
-    // produce a non-empty child for the character stored in the BWT
-    // at the unique companion row.
-    uint8_t bwt_c = 0;
-    if (!bwt_char_at(bwt_, l, bwt_c) || bwt_c != c)
+    const bwtint_t primary = static_cast<bwtint_t>(p.l);
+    const bwtint_t companion = static_cast<bwtint_t>(q.l);
+
+    /*
+     * For right extension, the companion interval is the BWT side on
+     * which the character test and LF calculation are performed.
+     */
+    if (companion == bwt_->primary)
+        return false; // The BWT row at '$' has no nucleotide character.
+
+    const bwtint_t packed_companion =
+        companion - (companion > bwt_->primary);
+    const uint8_t bwt_c =
+        static_cast<uint8_t>(bwt_B0(bwt_, packed_companion));
+
+    if (bwt_c != c)
         return false;
 
-    // Companion interval: LF maps the unique row containing c.
-    const bwtint_t new_companion = lf(bwt_, l, c);
+    /*
+     * bwt_occ() is inclusive, so the occurrence count must end at
+     * companion - 1.
+     */
+    const bwtint_t new_companion =
+        bwt_->L2[c] + 1 + bwt_occ(
+            bwt_,
+            companion == 0 ? (bwtint_t)-1 : companion - 1,
+            c);
 
-    // Primary interval: reproduce bwt_extend()'s x[is_back] boundary
-    // calculation. For a singleton only one child has size 1, namely c.
-    const bwtint_t crosses_dollar =
-        (q.l <= bwt_->primary && q.l + 1 - 1 >= bwt_->primary) ? 1 : 0;
-    const bwtint_t new_primary =
-        static_cast<bwtint_t>(p.l) + crosses_dollar;
+    /*
+     * The same singleton simplification applies to the paired primary
+     * boundary.  The '$' row was rejected above, so its correction is
+     * zero, and all cumulative child-size terms for bases greater than
+     * c are zero.
+     */
+    const bwtint_t new_primary = primary;
 
     out = SA_Range::bidirectional(
         Interval{
