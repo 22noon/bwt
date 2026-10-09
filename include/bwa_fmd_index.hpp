@@ -6,7 +6,6 @@ extern "C" {
 
 #include "sa_range.hpp"
 #include <vector>
-#include "sa_range.hpp"
 
 class BwaFMDIndex {
 public:
@@ -76,7 +75,7 @@ public:
      */
     std::vector<uint64_t> locate(
         const SA_Range& range) const;
-    
+
 
 private:
     const bwt_t* bwt_;

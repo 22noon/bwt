@@ -8,12 +8,6 @@
 #include <unordered_set>
 #include <vector>
 
-static uint8_t complement_base(uint8_t c)
-{
-    assert(c < 4);
-    return static_cast<uint8_t>(3 - c);
-}
-
 static void print_bwa(const char* s, const bwtintv_t& v)
 {
     std::cout << s
@@ -56,13 +50,7 @@ static bwtintv_t direct_extend(
     bool left)
 {
     bwtintv_t out[4]{};
-
-    bwt_extend(
-        bwt,
-        &in,
-        out,
-        left ? 1 : 0);
-
+    bwt_extend(bwt, &in, out, left ? 1 : 0);
     return out[base];
 }
 
@@ -75,8 +63,7 @@ static void check_initial(
     bwtintv_t expected{};
     bwt_set_intv(bwt, base, expected);
 
-    const SA_Range actual =
-        index.initial_range(base);
+    const SA_Range actual = index.initial_range(base);
 
     std::cout << "\nInitial " << name << '\n';
     print_bwa("BWA", expected);
@@ -105,22 +92,15 @@ static SA_Range check_extend(
     in.info = 0;
 
     /*
-     * BWA's bwt_extend() uses the FMD representation:
-     *
-     *   left extension by c  -> ok[c]
-     *   right extension by c -> ok[complement(c)]
-     *
-     * The BwaFMDIndex public API hides this representation detail.
+     * The public API uses logical bases.  BWA's right-extension
+     * result is indexed by the complementary base because the
+     * companion interval represents the reverse-complement side.
      */
     const uint8_t bwa_base =
-        left ? base : complement_base(base);
+        left ? base : static_cast<uint8_t>(3 - base);
 
     const bwtintv_t expected =
-        direct_extend(
-            bwt,
-            in,
-            bwa_base,
-            left);
+        direct_extend(bwt, in, bwa_base, left);
 
     const SA_Range actual =
         left
@@ -152,11 +132,8 @@ static std::string interval_key(const SA_Range& r)
 
 /*
  * Generate singleton states using the real bwt_extend() routine.
- *
- * These states are represented in BWA's native FMD orientation.
- * We use left extension here simply to enumerate valid states; the
- * singleton checks below explicitly account for the FMD complement
- * convention for right extension.
+ * This avoids assuming that a particular hand-written sequence
+ * happens to produce singleton intervals.
  */
 static std::vector<SA_Range> collect_singletons(
     const BwaFMDIndex& index,
@@ -177,7 +154,6 @@ static std::vector<SA_Range> collect_singletons(
         for (const SA_Range& r : frontier) {
             if (r.size() == 1) {
                 const std::string k = interval_key(r);
-
                 if (seen.insert(k).second)
                     result.push_back(r);
             }
@@ -189,36 +165,23 @@ static std::vector<SA_Range> collect_singletons(
             in.x[0] = static_cast<bwtint_t>(p.l);
             in.x[1] = static_cast<bwtint_t>(q.l);
             in.x[2] = static_cast<bwtint_t>(r.size());
-            in.info = 0;
 
             bwtintv_t ok[4]{};
-
-            /*
-             * Use BWA's native left-extension operation to enumerate
-             * the children. The resulting states are valid FMD states.
-             */
-            bwt_extend(
-                bwt,
-                &in,
-                ok,
-                1);
+            bwt_extend(bwt, &in, ok, 1);
 
             for (int c = 0; c < 4; ++c) {
                 if (ok[c].x[2] == 0)
                     continue;
 
-                SA_Range child =
-                    SA_Range::bidirectional(
-                        Interval{
-                            static_cast<uint64_t>(ok[c].x[0]),
-                            static_cast<uint64_t>(
-                                ok[c].x[0] + ok[c].x[2])
-                        },
-                        Interval{
-                            static_cast<uint64_t>(ok[c].x[1]),
-                            static_cast<uint64_t>(
-                                ok[c].x[1] + ok[c].x[2])
-                        });
+                SA_Range child = SA_Range::bidirectional(
+                    Interval{
+                        static_cast<uint64_t>(ok[c].x[0]),
+                        static_cast<uint64_t>(ok[c].x[0] + ok[c].x[2])
+                    },
+                    Interval{
+                        static_cast<uint64_t>(ok[c].x[1]),
+                        static_cast<uint64_t>(ok[c].x[1] + ok[c].x[2])
+                    });
 
                 next.push_back(child);
             }
@@ -237,7 +200,6 @@ static void check_singleton(
 {
     for (uint8_t c = 0; c < 4; ++c) {
         bwtintv_t in{};
-
         const auto p = range.primary_interval();
         const auto q = range.companion_interval();
 
@@ -249,99 +211,49 @@ static void check_singleton(
         bwtintv_t left_ok[4]{};
         bwtintv_t right_ok[4]{};
 
-        bwt_extend(
-            bwt,
-            &in,
-            left_ok,
-            1);
-
-        bwt_extend(
-            bwt,
-            &in,
-            right_ok,
-            0);
+        bwt_extend(bwt, &in, left_ok, 1);
+        bwt_extend(bwt, &in, right_ok, 0);
 
         SA_Range left_out;
         SA_Range right_out;
 
         const bool left_success =
-            index.extend_left_singleton(
-                range,
-                c,
-                left_out);
+            index.extend_left_singleton(range, c, left_out);
 
         const bool right_success =
-            index.extend_right_singleton(
-                range,
-                c,
-                right_out);
+            index.extend_right_singleton(range, c, right_out);
 
-        /*
-         * Left extension:
-         *
-         *   logical cP -> BWA ok[c]
-         */
-        const bool expected_left =
-            left_ok[c].x[2] == 1;
+        const bool expected_left = left_ok[c].x[2] == 1;
 
-        /*
-         * Right extension:
-         *
-         *   logical Pc -> BWA ok[complement(c)]
-         */
-        const uint8_t bwa_right_base =
-            complement_base(c);
+        const uint8_t right_bwa_c =
+            static_cast<uint8_t>(3 - c);
 
         const bool expected_right =
-            right_ok[bwa_right_base].x[2] == 1;
+            right_ok[right_bwa_c].x[2] == 1;
 
         if (left_success != expected_left) {
-            std::cerr
-                << "LEFT singleton mismatch: base="
-                << int(c)
-                << " range="
-                << interval_key(range)
-                << " expected_ok="
-                << expected_left
-                << " actual_ok="
-                << left_success
-                << '\n';
-
-            print_bwa(
-                "expected-left",
-                left_ok[c]);
-
+            std::cerr << "LEFT singleton mismatch: base=" << int(c)
+                      << " range=" << interval_key(range)
+                      << " expected_ok=" << expected_left
+                      << " actual_ok=" << left_success << '\n';
+            print_bwa("expected-left", left_ok[c]);
             return;
         }
 
         if (right_success != expected_right) {
-            std::cerr
-                << "RIGHT singleton mismatch: base="
-                << int(c)
-                << " range="
-                << interval_key(range)
-                << " expected_ok="
-                << expected_right
-                << " actual_ok="
-                << right_success
-                << '\n';
-
-            print_bwa(
-                "expected-right",
-                right_ok[bwa_right_base]);
-
+            std::cerr << "RIGHT singleton mismatch: base=" << int(c)
+                      << " range=" << interval_key(range)
+                      << " expected_ok=" << expected_right
+                      << " actual_ok=" << right_success << '\n';
+            print_bwa("expected-right", right_ok[right_bwa_c]);
             return;
         }
 
         if (left_success)
-            assert_same(
-                left_out,
-                left_ok[c]);
+            assert_same(left_out, left_ok[c]);
 
         if (right_success)
-            assert_same(
-                right_out,
-                right_ok[bwa_right_base]);
+            assert_same(right_out, right_ok[right_bwa_c]);
     }
 }
 
@@ -354,14 +266,12 @@ int main(int argc, char** argv)
         return 2;
     }
 
-    bwt_t* bwt =
-        bwt_restore_bwt(argv[1]);
+    bwt_t* bwt = bwt_restore_bwt(argv[1]);
 
     if (bwt == nullptr) {
         std::cerr
             << "Could not load BWA BWT: "
-            << argv[1]
-            << '\n';
+            << argv[1] << '\n';
         return 1;
     }
 
@@ -373,50 +283,26 @@ int main(int argc, char** argv)
         check_initial(index, bwt, 2, "G");
         check_initial(index, bwt, 3, "T");
 
-        SA_Range r =
-            index.initial_range(0);
+        SA_Range r = index.initial_range(0);
 
         r = check_extend(
-            index,
-            bwt,
-            r,
-            1,
-            false,
-            "extend_right(C)",
-            "AC");
+            index, bwt, r, 1, false,
+            "extend_right(C)", "AC");
 
         r = check_extend(
-            index,
-            bwt,
-            r,
-            2,
-            false,
-            "extend_right(G)",
-            "ACG");
+            index, bwt, r, 2, false,
+            "extend_right(G)", "ACG");
 
         r = check_extend(
-            index,
-            bwt,
-            r,
-            3,
-            true,
-            "extend_left(T)",
-            "TACG");
+            index, bwt, r, 3, true,
+            "extend_left(T)", "TACG");
 
         r = check_extend(
-            index,
-            bwt,
-            r,
-            3,
-            false,
-            "extend_right(T)",
-            "TACGT");
+            index, bwt, r, 3, false,
+            "extend_right(T)", "TACGT");
 
         const auto singleton_states =
-            collect_singletons(
-                index,
-                bwt,
-                12);
+            collect_singletons(index, bwt, 12);
 
         std::cout
             << "\nChecking singleton fast paths for "
@@ -424,13 +310,9 @@ int main(int argc, char** argv)
             << " singleton states...\n";
 
         for (const auto& s : singleton_states)
-            check_singleton(
-                index,
-                bwt,
-                s);
+            check_singleton(index, bwt, s);
 
-        std::cout
-            << "Singleton fast-path checks passed.\n";
+        std::cout << "Singleton fast-path checks passed.\n";
     }
 
     bwt_destroy(bwt);

@@ -131,10 +131,19 @@ void BwaFMDIndex::extend_right_all(
 
     bwt_extend(bwt_, &ik, ok, 0);
 
-    for (int c = 0; c < 4; ++c) {
+    /*
+     * BWA's right-extension result is indexed by the base on the
+     * companion/reverse-complement side.  The public API is expressed
+     * in terms of the logical base appended to the right of P, so:
+     *
+     *     logical c -> BWA ok[complement(c)] = ok[3-c]
+     */
+    for (uint8_t c = 0; c < 4; ++c) {
+        const uint8_t fmd_c = static_cast<uint8_t>(3 - c);
+
         out[c] = SA_Range::bidirectional(
-            from_bwa_primary(ok[c]),
-            from_bwa_companion(ok[c]));
+            from_bwa_primary(ok[fmd_c]),
+            from_bwa_companion(ok[fmd_c]));
     }
 }
 
