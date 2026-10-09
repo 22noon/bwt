@@ -34,6 +34,51 @@ bwtintv_t to_bwa(const SA_Range& r)
     return v;
 }
 
+BranchSet BwaFMDIndex::branch(
+    const SA_Range& range,
+    Direction direction) const
+{
+    if (!range.is_bidirectional())
+        throw std::logic_error(
+            "BwaFMDIndex::branch requires a bidirectional range");
+
+    bwtintv_t ik = to_bwa(range);
+    bwtintv_t ok[4]{};
+
+    const bool left = direction == Direction::Left;
+
+    bwt_extend(
+        bwt_,
+        &ik,
+        ok,
+        left ? 1 : 0);
+
+    BranchSet result;
+
+    for (uint8_t c = 0; c < 4; ++c) {
+        /*
+         * BWA's bwt_extend() uses the logical base directly for
+         * left extension, but the complementary base for right
+         * extension.
+         */
+        const uint8_t fmd_c =
+            left ? c : static_cast<uint8_t>(3 - c);
+
+        const auto& v = ok[fmd_c];
+
+        result.branches_[c] =
+            SA_Range::bidirectional(
+                from_bwa_primary(v),
+                from_bwa_companion(v));
+
+        if (v.x[2] != 0)
+            result.mask_ |=
+                static_cast<uint8_t>(1u << c);
+    }
+
+    return result;
+}
+
 } // namespace
 
 SA_Range BwaFMDIndex::initial_range(uint8_t c) const

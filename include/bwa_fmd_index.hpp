@@ -56,6 +56,8 @@ public:
         const SA_Range& range,
         SA_Range out[4]) const;
 
+    /* Find branches at this point */
+    BranchSet branch( const SA_Range& range, Direction direction) const;
     /*
      * Direct access for integration with the existing BWA API.
      */

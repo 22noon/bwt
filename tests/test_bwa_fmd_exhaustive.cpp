@@ -203,8 +203,8 @@ void check_halves(const BwaFMDIndex& idx,const std::string& R,
     auto actual=idx.locate(r);
     auto expected_f=occurrences(R,p);
     auto expected_rc=occurrences(rc(R),p);
-    std::set<uint64_t> af,ar,ef(expected_f.begin(),expected_f.end()),er;
-    for (auto x : actual) {
+    std::set<uint64_t> af,ar,ef(expected_f.begin(),expected_f.end()),er,crossing;
+    /*for (auto x : actual) {
         if (x + p.size() <= R.size()) {
             af.insert(x);
         } else if (x >= R.size() &&
@@ -212,6 +212,27 @@ void check_halves(const BwaFMDIndex& idx,const std::string& R,
             ar.insert(x);
         }
     }
+
+    std::set<uint64_t> af, ar, crossing;*/
+
+
+    for (auto x : actual) {
+        if (x < R.size()) {
+            if (x + p.size() <= R.size())
+                af.insert(x);
+            else
+                crossing.insert(x);
+        } else if (x + p.size() <= F.size()) {
+            ar.insert(x);
+        }
+    }
+    if (!crossing.empty()) {
+        std::cout << "  boundary-crossing hits for " << p << ":";
+        for (auto x : crossing)
+            std::cout << ' ' << x;
+        std::cout << '\n';
+    }
+
     for(auto x:expected_rc) er.insert(static_cast<uint64_t>(R.size())+x);
     if(af!=ef) fail("forward-half coordinates, "+p);
     if(ar!=er) fail("RC-half coordinates, "+p);
