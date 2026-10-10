@@ -367,3 +367,122 @@ std::vector<uint64_t> BwaFMDIndex::locate(
 
     return positions;
 }
+
+#include <limits>
+#include <utility>
+
+std::vector<LocatedHit> BwaFMDIndex::locate(
+    const SA_Range& range,
+    uint64_t pattern_length) const
+{
+    if (!range.is_bidirectional())
+        throw std::logic_error(
+            "locate requires a bidirectional/FMD range");
+
+    if (!bns_)
+        throw std::logic_error(
+            "locate requires BWA reference metadata");
+
+    if (pattern_length == 0)
+        throw std::invalid_argument(
+            "locate: pattern length must be greater than zero");
+
+    if (pattern_length >
+        static_cast<uint64_t>(std::numeric_limits<int>::max()))
+        throw std::invalid_argument(
+            "locate: pattern length exceeds BWA metadata API limits");
+
+    if (!bwt_->sa || bwt_->sa_intv <= 0)
+        throw std::logic_error(
+            "locate requires the BWA suffix array to be restored");
+
+    const auto p = range.primary_interval();
+
+    const bwtint_t l = static_cast<bwtint_t>(p.l);
+    const bwtint_t r = static_cast<bwtint_t>(p.r);
+
+    std::vector<LocatedHit> hits;
+    hits.reserve(static_cast<size_t>(r - l));
+
+    for (bwtint_t k = l; k < r; ++k) {
+        const int64_t pac =
+            static_cast<int64_t>(bwt_sa(bwt_, k));
+
+        int is_reverse = 0;
+
+        // Convert the indexed-text coordinate to the natural
+        // reference coordinate system.
+        int64_t pos = bns_depos(bns_, pac, &is_reverse);
+
+        /*
+         * For reverse-strand hits, bns_depos() gives the
+         * mirrored endpoint. Subtract length - 1 to obtain
+         * the leftmost coordinate on the forward reference.
+         */
+        if (is_reverse) {
+            if (pattern_length - 1 >
+                static_cast<uint64_t>(pos))
+                continue;
+
+            pos -= static_cast<int64_t>(
+                pattern_length - 1);
+        }
+
+        if (pos < 0 ||
+            static_cast<uint64_t>(pos) >=
+                static_cast<uint64_t>(bns_->l_pac))
+            continue;
+
+        // Reject hits extending beyond the natural reference.
+        if (pattern_length >
+            static_cast<uint64_t>(bns_->l_pac - pos))
+            continue;
+
+        const int64_t end =
+            pos + static_cast<int64_t>(pattern_length);
+
+        /*
+         * Resolve the complete hit interval. This rejects
+         * hits crossing adjacent reference sequences.
+         */
+        const int ref_id =
+            bns_intv2rid(bns_, pos, end);
+
+        if (ref_id < 0 || ref_id >= bns_->n_seqs)
+            continue;
+
+        const bntann1_t& ref = bns_->anns[ref_id];
+        const int64_t ref_end = ref.offset + ref.len;
+
+        if (pos < ref.offset || end > ref_end)
+            continue;
+
+        /*
+         * BWA replaces ambiguous bases in the packed reference.
+         * Reject apparent exact matches overlapping .amb intervals.
+         */
+        int ambi_ref_id = -1;
+
+        const int ambiguous = bns_cnt_ambi(
+            bns_,
+            pos,
+            static_cast<int>(pattern_length),
+            &ambi_ref_id);
+
+        if (ambiguous != 0 || ambi_ref_id != ref_id)
+            continue;
+
+        LocatedHit hit;
+        hit.ref_id = static_cast<uint32_t>(ref_id);
+        hit.ref_name = ref.name ? ref.name : "";
+        hit.position =
+            static_cast<uint64_t>(pos - ref.offset);
+        hit.strand = is_reverse
+            ? Strand::Reverse
+            : Strand::Forward;
+
+        hits.push_back(std::move(hit));
+    }
+
+    return hits;
+}

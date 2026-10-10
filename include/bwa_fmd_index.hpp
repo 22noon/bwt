@@ -2,11 +2,27 @@
 
 extern "C" {
 #include "bwt.h"
+#include "bntseq.h"
 }
 
 #include "sa_range.hpp"
 #include "sa_branches.hpp"
 #include <vector>
+#include <cstdint>
+#include <string>
+#include <stdexcept>
+
+enum class Strand {
+    Forward,
+    Reverse
+};
+
+struct LocatedHit {
+    uint32_t ref_id;       // Zero-based index into bntseq_t::anns
+    std::string ref_name; // Reference/contig name
+    uint64_t position;    // Zero-based leftmost position within reference
+    Strand strand;
+};
 
 class BwaFMDIndex {
 public:
@@ -15,6 +31,20 @@ public:
     {
         if (!bwt_)
             throw std::invalid_argument("BwaFMDIndex: null bwt_t");
+    }
+
+    BwaFMDIndex(
+        const bwt_t* bwt,
+        const bntseq_t* reference)
+        : bwt_(bwt), bns_(reference)
+    {
+        if (!bwt_)
+            throw std::invalid_argument(
+                "BwaFMDIndex: null bwt_t");
+
+        if (!bns_)
+            throw std::invalid_argument(
+                "BwaFMDIndex: null reference metadata");
     }
 
     /*
@@ -63,6 +93,7 @@ public:
      * Direct access for integration with the existing BWA API.
      */
     const bwt_t* bwt() const noexcept { return bwt_; }
+    const bntseq_t* reference_metadata() const noexcept { return bns_; }
 
     bool extend_left_singleton( const SA_Range& range, uint8_t c, SA_Range& out) const;
     bool extend_right_singleton( const SA_Range& range, uint8_t c, SA_Range& out) const;
@@ -79,9 +110,13 @@ public:
     std::vector<uint64_t> locate(
         const SA_Range& range) const;
 
+    std::vector<LocatedHit> locate(
+        const SA_Range& range,
+        uint64_t pattern_length) const;
 
 private:
-    const bwt_t* bwt_;
+    const bwt_t* bwt_ = nullptr;
+    const bntseq_t* bns_ = nullptr;
 
     SA_Range extend_all_one(
         const SA_Range& range,
