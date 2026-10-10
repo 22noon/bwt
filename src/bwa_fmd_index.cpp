@@ -34,6 +34,9 @@ bwtintv_t to_bwa(const SA_Range& r)
     return v;
 }
 
+
+} // namespace
+
 BranchSet BwaFMDIndex::branch(
     const SA_Range& range,
     Direction direction) const
@@ -78,8 +81,6 @@ BranchSet BwaFMDIndex::branch(
 
     return result;
 }
-
-} // namespace
 
 SA_Range BwaFMDIndex::initial_range(uint8_t c) const
 {

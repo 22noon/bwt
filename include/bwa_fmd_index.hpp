@@ -5,6 +5,7 @@ extern "C" {
 }
 
 #include "sa_range.hpp"
+#include "sa_branches.hpp"
 #include <vector>
 
 class BwaFMDIndex {
