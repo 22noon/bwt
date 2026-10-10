@@ -469,7 +469,7 @@ std::vector<LocatedHit> BwaFMDIndex::locate(
             static_cast<int>(pattern_length),
             &ambi_ref_id);
 
-        if (ambiguous != 0 || ambi_ref_id != ref_id)
+        if (ambiguous != 0)
             continue;
 
         LocatedHit hit;
