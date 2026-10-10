@@ -6,6 +6,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <tuple>
 #include <vector>
 
 namespace {
@@ -45,24 +46,76 @@ SA_Range search(
     return range;
 }
 
-const LocatedHit& only_hit(
-    const std::vector<LocatedHit>& hits)
+struct ExpectedHit {
+    uint32_t ref_id;
+    std::string ref_name;
+    uint64_t position;
+    Strand strand;
+};
+
+bool same_hit(
+    const LocatedHit& actual,
+    const ExpectedHit& expected)
 {
-    assert(hits.size() == 1);
-    return hits.front();
+    return actual.ref_id == expected.ref_id &&
+           actual.ref_name == expected.ref_name &&
+           actual.position == expected.position &&
+           actual.strand == expected.strand;
 }
 
-void check_hit(
-    const LocatedHit& hit,
-    uint32_t ref_id,
-    const std::string& name,
-    uint64_t position,
-    Strand strand)
+void assert_expected_hits(
+    const std::vector<LocatedHit>& actual,
+    std::vector<ExpectedHit> expected)
 {
-    assert(hit.ref_id == ref_id);
-    assert(hit.ref_name == name);
-    assert(hit.position == position);
-    assert(hit.strand == strand);
+    assert(actual.size() == expected.size());
+
+    /*
+     * locate() returns hits in SA-row order.  That order is not part
+     * of the metadata-aware locate() API, so compare as an unordered
+     * set of (reference, position, strand) tuples.
+     */
+    std::vector<bool> matched(actual.size(), false);
+
+    for (const auto& e : expected) {
+        bool found = false;
+
+        for (size_t i = 0; i < actual.size(); ++i) {
+            if (!matched[i] && same_hit(actual[i], e)) {
+                matched[i] = true;
+                found = true;
+                break;
+            }
+        }
+
+        if (!found) {
+            std::cerr
+                << "Expected hit not found:"
+                << " ref_id=" << e.ref_id
+                << " ref_name=" << e.ref_name
+                << " position=" << e.position
+                << " strand="
+                << (e.strand == Strand::Forward
+                        ? "Forward"
+                        : "Reverse")
+                << '\n';
+
+            std::cerr << "Actual hits:\n";
+
+            for (const auto& hit : actual) {
+                std::cerr
+                    << "  ref_id=" << hit.ref_id
+                    << " ref_name=" << hit.ref_name
+                    << " position=" << hit.position
+                    << " strand="
+                    << (hit.strand == Strand::Forward
+                            ? "Forward"
+                            : "Reverse")
+                    << '\n';
+            }
+
+            assert(false);
+        }
+    }
 }
 
 } // namespace
@@ -80,9 +133,6 @@ int main(int argc, char** argv)
 
     const std::string bwt_file = prefix + ".bwt";
     const std::string sa_file  = prefix + ".sa";
-    const std::string ann_file = prefix + ".ann";
-    const std::string amb_file = prefix + ".amb";
-    const std::string pac_file = prefix + ".pac";
 
     /*
      * This test assumes the BWA index was made from:
@@ -97,10 +147,7 @@ int main(int argc, char** argv)
      *
      *   ref1 length = 11
      *   ref2 length = 10
-     *
-     * and the natural forward reference coordinate space is:
-     *
-     *   [0, 21)
+     *   l_pac       = 21
      */
 
     bwt_t* bwt = bwt_restore_bwt(bwt_file.c_str());
@@ -124,7 +171,7 @@ int main(int argc, char** argv)
     }
 
     /*
-     * Load the BWA reference metadata.
+     * Load BWA reference metadata.
      *
      * bns_restore() loads .ann, .amb and .pac.
      */
@@ -146,154 +193,136 @@ int main(int argc, char** argv)
 
     /*
      * ------------------------------------------------------------
-     * 1. Forward-strand hit
+     * 1. ACG
      * ------------------------------------------------------------
      *
-     * ref1 = ACGTTGCAACG
-     *          ^^^
-     * ACG occurs at position 0.
+     * ref1 = A C G T T G C A A C G
+     *        ^^^
+     *         0
+     *
+     * ACG also occurs at position 8.
+     *
+     * RC(ACG) = CGT, which occurs at position 1.
+     *
+     * Therefore:
+     *
+     *   (ref1, 0, Forward)
+     *   (ref1, 1, Reverse)
+     *   (ref1, 8, Forward)
      */
     {
         const std::string pattern = "ACG";
-        const SA_Range range = search(index, pattern);
+
+        const SA_Range range =
+            search(index, pattern);
 
         const auto hits =
             index.locate(range, pattern.size());
 
-        assert(hits.size() == 3);
-
-        bool found_forward_0 = false;
-        bool found_reverse_1 = false;
-        bool found_forward_8 = false;
-
-        for (const auto& hit : hits) {
-            assert(hit.ref_id == 0);
-            assert(hit.ref_name == "ref1");
-
-            if (hit.position == 0 &&
-                hit.strand == Strand::Forward)
+        assert_expected_hits(
+            hits,
             {
-                found_forward_0 = true;
-            }
-            else if (hit.position == 1 &&
-                    hit.strand == Strand::Reverse)
-            {
-                found_reverse_1 = true;
-            }
-            else if (hit.position == 8 &&
-                    hit.strand == Strand::Forward)
-            {
-                found_forward_8 = true;
-            }
-            else {
-                std::cerr
-                    << "Unexpected hit: position="
-                    << hit.position
-                    << " strand="
-                    << (hit.strand == Strand::Forward
-                            ? "Forward"
-                            : "Reverse")
-                    << '\n';
-
-                assert(false);
-            }
-        }
-
-        assert(found_forward_0);
-        assert(found_reverse_1);
-        assert(found_forward_8);
+                {0, "ref1", 0, Strand::Forward},
+                {0, "ref1", 1, Strand::Reverse},
+                {0, "ref1", 8, Strand::Forward}
+            });
     }
+
     /*
      * ------------------------------------------------------------
-     * 2. Reverse-strand hit
+     * 2. TGC
      * ------------------------------------------------------------
      *
-     * ref1 contains:
+     * ref1 = A C G T T G C A A C G
+     *              ^^^
+     *              4
      *
-     *   ...TGCA...
+     * TGC occurs forward at position 4.
      *
-     * The reverse-complement of "GCA" is "TGC".
+     * RC(TGC) = GCA, which occurs at position 5:
      *
-     * Searching TGC therefore gives a reverse-strand occurrence
-     * corresponding to ref1 position 4.
+     * ref1 = A C G T T G C A A C G
+     *                ^^^
+     *                5
+     *
+     * Therefore:
+     *
+     *   (ref1, 4, Forward)
+     *   (ref1, 5, Reverse)
      */
     {
         const std::string pattern = "TGC";
-        const SA_Range range = search(index, pattern);
+
+        const SA_Range range =
+            search(index, pattern);
 
         const auto hits =
             index.locate(range, pattern.size());
 
-        bool found_reverse = false;
-
-        for (const auto& hit : hits) {
-            if (hit.ref_id == 0 &&
-                hit.position == 4 &&
-                hit.strand == Strand::Reverse)
+        assert_expected_hits(
+            hits,
             {
-                found_reverse = true;
-                assert(hit.ref_name == "ref1");
-            }
-        }
-
-        assert(found_reverse);
+                {0, "ref1", 4, Strand::Forward},
+                {0, "ref1", 5, Strand::Reverse}
+            });
     }
 
     /*
      * ------------------------------------------------------------
-     * 3. Second reference
+     * 3. TTACC on ref2
      * ------------------------------------------------------------
+     *
+     * ref2 = T T A C C G G T A A
+     *        ^^^^^
+     *        0
+     *
+     * TTACC occurs only in the forward orientation.
      */
     {
         const std::string pattern = "TTACC";
-        const SA_Range range = search(index, pattern);
+
+        const SA_Range range =
+            search(index, pattern);
 
         const auto hits =
             index.locate(range, pattern.size());
 
-        assert(hits.size() == 1);
-
-        check_hit(
-            only_hit(hits),
-            1,
-            "ref2",
-            0,
-            Strand::Forward);
+            assert_expected_hits( hits, { {1, "ref2", 0, Strand::Forward}, {1, "ref2", 5, Strand::Reverse} });
     }
 
     /*
      * ------------------------------------------------------------
-     * 4. Reverse-strand hit on ref2
+     * 4. CGG on ref2
      * ------------------------------------------------------------
      *
-     * ref2 = TTACCGGTAA
+     * ref2 = T T A C C G G T A A
+     *              ^^^
+     *              4
      *
-     * Reverse complement of "CCG" is "CGG".
+     * CGG occurs forward at position 4.
      *
-     * CCG occurs at ref2 position 3, so CGG should locate to:
+     * RC(CGG) = CCG, which occurs at position 3.
      *
-     *   ref2 position 3, Reverse
+     * Therefore:
+     *
+     *   (ref2, 4, Forward)
+     *   (ref2, 3, Reverse)
      */
     {
         const std::string pattern = "CGG";
-        const SA_Range range = search(index, pattern);
+
+        const SA_Range range =
+            search(index, pattern);
 
         const auto hits =
             index.locate(range, pattern.size());
 
-        bool found_reverse = false;
-
-        for (const auto& hit : hits) {
-            if (hit.ref_id == 1 &&
-                hit.position == 3 &&
-                hit.strand == Strand::Reverse)
+        assert_expected_hits(
+            hits,
             {
-                found_reverse = true;
-                assert(hit.ref_name == "ref2");
-            }
-        }
-
-        assert(found_reverse);
+                {1, "ref2", 4, Strand::Forward},
+                {1, "ref2", 3, Strand::Reverse}
+            });
     }
 
     /*
