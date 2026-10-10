@@ -71,6 +71,7 @@ BranchSet BwaFMDIndex::branch(
 
         result.branches_[c] =
             SA_Range::bidirectional(
+                this,
                 from_bwa_primary(v),
                 from_bwa_companion(v));
 
@@ -92,6 +93,7 @@ SA_Range BwaFMDIndex::initial_range(uint8_t c) const
     bwt_set_intv(bwt_, c, v);
 
     return SA_Range::bidirectional(
+        this,
         from_bwa_primary(v),
         from_bwa_companion(v));
 }
@@ -126,6 +128,7 @@ SA_Range BwaFMDIndex::extend_all_one(
     bwt_extend(bwt_, &ik, ok, is_back);
 
     return SA_Range::bidirectional(
+        this,
         from_bwa_primary(ok[c]),
         from_bwa_companion(ok[c]));
 }
@@ -159,6 +162,7 @@ void BwaFMDIndex::extend_left_all(
 
     for (int c = 0; c < 4; ++c) {
         out[c] = SA_Range::bidirectional(
+            this,
             from_bwa_primary(ok[c]),
             from_bwa_companion(ok[c]));
     }
@@ -188,6 +192,7 @@ void BwaFMDIndex::extend_right_all(
         const uint8_t fmd_c = static_cast<uint8_t>(3 - c);
 
         out[c] = SA_Range::bidirectional(
+            this,
             from_bwa_primary(ok[fmd_c]),
             from_bwa_companion(ok[fmd_c]));
     }
@@ -254,6 +259,7 @@ bool BwaFMDIndex::extend_left_singleton(
     const bwtint_t new_companion = companion;
 
     out = SA_Range::bidirectional(
+        this,
         Interval{
             static_cast<uint64_t>(new_primary),
             static_cast<uint64_t>(new_primary + 1)
@@ -324,6 +330,7 @@ bool BwaFMDIndex::extend_right_singleton(
     const bwtint_t new_primary = primary;
 
     out = SA_Range::bidirectional(
+        this,
         Interval{
             static_cast<uint64_t>(new_primary),
             static_cast<uint64_t>(new_primary + 1)

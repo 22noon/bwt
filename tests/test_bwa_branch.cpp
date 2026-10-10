@@ -415,6 +415,56 @@ int main(int argc, char** argv)
     test_bitmask_iterator();
     test_branching(index);
 
+    // Test search state propagation across branch and extension
+    {
+        SA_Range parent = index.initial_range(0);
+        parent.set_position(42);
+        parent.set_valid(true);
+        parent.add_mismatch(5, 'C');
+        parent.set_forbidden_base('G');
+        parent.set_unidirectional(true);
+
+        BranchSet left_branches = parent.branch(Direction::Left);
+        for (uint8_t c = 0; c < 4; ++c) {
+            const SA_Range& child = left_branches[c];
+            assert(child.position() == 42);
+            assert(child.valid() == true);
+            assert(child.mismatch_count() == 1);
+            assert(child.mismatches()[0].Pos == 5);
+            assert(child.mismatches()[0].Char == 'C');
+            assert(child.forbidden_base() == 'G');
+            assert(child.is_unidirectional() == true);
+        }
+
+        BranchSet right_branches = parent.branch(Direction::Right);
+        for (uint8_t c = 0; c < 4; ++c) {
+            const SA_Range& child = right_branches[c];
+            assert(child.position() == 42);
+            assert(child.valid() == true);
+            assert(child.mismatch_count() == 1);
+            assert(child.mismatches()[0].Pos == 5);
+            assert(child.mismatches()[0].Char == 'C');
+            assert(child.forbidden_base() == 'G');
+            assert(child.is_unidirectional() == true);
+        }
+
+        SA_Range ext_left = parent.extend_left(1);
+        assert(ext_left.position() == 42);
+        assert(ext_left.valid() == true);
+        assert(ext_left.mismatch_count() == 1);
+        assert(ext_left.forbidden_base() == 'G');
+        assert(ext_left.is_unidirectional() == true);
+
+        SA_Range ext_right = parent.extend_right(1);
+        assert(ext_right.position() == 42);
+        assert(ext_right.valid() == true);
+        assert(ext_right.mismatch_count() == 1);
+        assert(ext_right.forbidden_base() == 'G');
+        assert(ext_right.is_unidirectional() == true);
+
+        std::cout << "Branch and extension state propagation tests passed.\n";
+    }
+
     bwt_destroy(bwt);
 
     std::cout

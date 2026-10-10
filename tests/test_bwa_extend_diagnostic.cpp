@@ -174,6 +174,7 @@ static std::vector<SA_Range> collect_singletons(
                     continue;
 
                 SA_Range child = SA_Range::bidirectional(
+                    &index,
                     Interval{
                         static_cast<uint64_t>(ok[c].x[0]),
                         static_cast<uint64_t>(ok[c].x[0] + ok[c].x[2])

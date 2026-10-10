@@ -72,7 +72,7 @@ SA_Range exact_search(
             SA_Range next;
 
             if (!index.extend_right_singleton(range, c, next))
-                return SA_Range::bidirectional({}, {});
+                return SA_Range::bidirectional(&index, {}, {});
 
             range = next;
         } else {

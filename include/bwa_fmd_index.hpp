@@ -12,18 +12,6 @@ extern "C" {
 #include <string>
 #include <stdexcept>
 
-enum class Strand {
-    Forward,
-    Reverse
-};
-
-struct LocatedHit {
-    uint32_t ref_id;       // Zero-based index into bntseq_t::anns
-    std::string ref_name; // Reference/contig name
-    uint64_t position;    // Zero-based leftmost position within reference
-    Strand strand;
-};
-
 class BwaFMDIndex {
 public:
     explicit BwaFMDIndex(const bwt_t* bwt)

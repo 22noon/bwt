@@ -7,11 +7,6 @@
 #include <cstdint>
 #include <stdexcept>
 
-enum class Direction {
-    Left,
-    Right
-};
-
 class BwaFMDIndex;
 
 class BranchSet {
@@ -65,4 +60,3 @@ private:
     std::array<SA_Range, ALPHABET_SIZE> branches_{};
     uint8_t mask_ = 0;
 };
-
