@@ -25,6 +25,7 @@ add_library(fm_range
     src/sa_range.cpp
     src/bwa_fmd_index.cpp
     src/mismatch_search.cpp
+    src/exact_search.cpp
 )
 
 target_include_directories(fm_range
@@ -62,6 +63,10 @@ add_executable(test_bwa_locate
 add_executable(test_mismatch_search
     tests/test_mismatch_search.cpp
 )
+
+add_executable(test_fast_exact_search
+    tests/test_fast_exact_search.cpp
+)
 target_link_libraries(test_sa_range PRIVATE fm_range)
 target_link_libraries(test_bwa_extend_diagnostic PRIVATE fm_range)
 target_link_libraries(test_exact_search PRIVATE fm_range)
@@ -69,6 +74,7 @@ target_link_libraries(test_bwa_fmd_exhaustive PRIVATE fm_range)
 target_link_libraries(test_bwa_branch PRIVATE fm_range)
 target_link_libraries(test_bwa_locate PRIVATE fm_range pthread m)
 target_link_libraries(test_mismatch_search PRIVATE fm_range)
+target_link_libraries(test_fast_exact_search PRIVATE fm_range)
 
 enable_testing()
 add_test(NAME test_sa_range COMMAND test_sa_range)
@@ -78,3 +84,4 @@ add_test(NAME test_bwa_fmd_exhaustive COMMAND test_bwa_fmd_exhaustive /home/chan
 add_test(NAME test_bwa_branch COMMAND test_bwa_branch /home/chandana.tennakoon@pirbright.ac.uk/git/batmis/minimal_bwt/tests/tmp_exact_search/test.bwt /home/chandana.tennakoon@pirbright.ac.uk/git/batmis/minimal_bwt/tests/tmp_exact_search/test.sa)
 add_test(NAME test_bwa_locate COMMAND test_bwa_locate /home/chandana.tennakoon@pirbright.ac.uk/git/batmis/minimal_bwt/tests/tmp_locate/test)
 add_test(NAME test_mismatch_search COMMAND test_mismatch_search /home/chandana.tennakoon@pirbright.ac.uk/git/batmis/minimal_bwt/tests/tmp_exact_search/test.bwt /home/chandana.tennakoon@pirbright.ac.uk/git/batmis/minimal_bwt/tests/tmp_exact_search/test.sa)
+add_test(NAME test_fast_exact_search COMMAND test_fast_exact_search /home/chandana.tennakoon@pirbright.ac.uk/git/batmis/minimal_bwt/tests/tmp_exact_search/test.bwt /home/chandana.tennakoon@pirbright.ac.uk/git/batmis/minimal_bwt/tests/tmp_exact_search/test.sa)
