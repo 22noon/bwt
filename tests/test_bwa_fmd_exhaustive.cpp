@@ -1,4 +1,5 @@
 #include "bwa_fmd_index.hpp"
+#include "exact_search.hpp"
 #include "bwt.h"
 
 #include <algorithm>
@@ -264,6 +265,38 @@ void test_pattern(const BwaFMDIndex& idx,const std::string& R,
 
     if(!same(a,b)) fail("left/right construction differs, "+p);
     if(!same(a,c)) fail("mixed construction differs, "+p);
+
+    // The unidirectional path must retain exactly one interval. For a
+    // rightward scan this is the companion interval (RC(P)); for a
+    // leftward scan it is the primary interval (P).
+    const auto sr=search_exact_unidirectional(idx,p,Direction::Right);
+    const auto sl=search_exact_unidirectional(idx,p,Direction::Left);
+    if(!sr.is_single() || sr.orientation()!=SA_Range::Orientation::Right)
+        fail("right exact search did not return a right-oriented single range, "+p);
+    if(!sl.is_single() || sl.orientation()!=SA_Range::Orientation::Left)
+        fail("left exact search did not return a left-oriented single range, "+p);
+    const auto sri=sr.interval(), sli=sl.interval();
+    const auto ac=a.companion_interval(), bp=b.primary_interval();
+    // Empty FM intervals have no canonical insertion point, so compare their
+    // cardinality above; compare endpoints only when the pattern is present.
+    if(!sr.empty() && (sri.l!=ac.l || sri.r!=ac.r))
+        fail("right single interval differs from companion interval, "+p);
+    if(!sl.empty() && (sli.l!=bp.l || sli.r!=bp.r))
+        fail("left single interval differs from primary interval, "+p);
+    if(sr.size()!=a.size() || sl.size()!=b.size())
+        fail("single exact-search cardinality differs, "+p);
+    if(!sr.empty() && sr.position()!=p.size()-1)
+        fail("right single exact-search position metadata differs, "+p);
+    if(!sl.empty() && sl.position()!=p.size()-1)
+        fail("left single exact-search position metadata differs, "+p);
+
+    const auto right_seed=search_exact_bidirectional_seed(
+        idx,p,Direction::Right);
+    const auto left_seed=search_exact_bidirectional_seed(
+        idx,p,Direction::Left);
+    if(!right_seed.is_bidirectional() || right_seed.size()!=a.size() ||
+       !left_seed.is_bidirectional() || left_seed.size()!=b.size())
+        fail("bidirectional seed compatibility regression, "+p);
 
     check_rc_symmetry(idx,F,p,a);
     check_all(idx,F,p,a);

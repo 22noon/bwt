@@ -98,6 +98,76 @@ SA_Range BwaFMDIndex::initial_range(uint8_t c) const
         from_bwa_companion(v));
 }
 
+SA_Range BwaFMDIndex::initial_single_range(
+    uint8_t c,
+    SA_Range::Orientation orientation) const
+{
+    if (c > 3)
+        throw std::invalid_argument(
+            "BwaFMDIndex::initial_single_range: base must be 0..3");
+
+    /*
+     * bwt_set_intv(bwt_, c, v) would initialise these two intervals:
+     *
+     *   primary:   [L2[c] + 1,     L2[c + 1] + 1)
+     *   companion: [L2[3 - c] + 1, L2[4 - c] + 1)
+     *
+     * A right-oriented single range stores only the latter, which is the
+     * interval for RC(c).  Constructing it directly avoids materialising the
+     * companion/primary interval that a one-direction search will not use.
+     */
+    const uint8_t bwt_c = orientation == SA_Range::Orientation::Left
+        ? c
+        : static_cast<uint8_t>(3 - c);
+
+    return SA_Range::single(
+        this,
+        Interval{
+            static_cast<uint64_t>(bwt_->L2[bwt_c] + 1),
+            static_cast<uint64_t>(bwt_->L2[bwt_c + 1] + 1)
+        },
+        orientation);
+}
+
+SA_Range BwaFMDIndex::extend_single_one(
+    const SA_Range& range,
+    uint8_t bwt_c) const
+{
+    if (!range.is_single())
+        throw std::logic_error(
+            "BwaFMDIndex::extend_single_one requires a single range");
+
+    if (bwt_c > 3)
+        throw std::invalid_argument(
+            "BwaFMDIndex::extend_single_one: base must be 0..3");
+
+    const Interval interval = range.interval();
+    bwtint_t before = 0;
+    bwtint_t through = 0;
+
+    /*
+     * This is an ordinary one-symbol backward extension.  bwt_2occ()
+     * obtains both rank values for the one requested symbol without the
+     * four-way bwt_extend() branch calculation.
+     */
+    bwt_2occ(
+        bwt_,
+        static_cast<bwtint_t>(interval.l - 1),
+        static_cast<bwtint_t>(interval.r - 1),
+        bwt_c,
+        &before,
+        &through);
+
+    const bwtint_t start = bwt_->L2[bwt_c] + 1 + before;
+    return SA_Range::single(
+        this,
+        Interval{
+            static_cast<uint64_t>(start),
+            static_cast<uint64_t>(bwt_->L2[bwt_c] + 1 + through)
+        },
+        range.orientation());
+}
+
 SA_Range BwaFMDIndex::extend_all_one(
     const SA_Range& range,
     uint8_t c,
@@ -137,6 +207,13 @@ SA_Range BwaFMDIndex::extend_left(
     const SA_Range& range,
     uint8_t c) const
 {
+    if (range.is_single()) {
+        if (range.orientation() != SA_Range::Orientation::Left)
+            throw std::logic_error(
+                "BwaFMDIndex::extend_left requires a left-oriented single range");
+        return extend_single_one(range, c);
+    }
+
     return extend_all_one(range, c, 1);
 }
 
@@ -144,6 +221,13 @@ SA_Range BwaFMDIndex::extend_right(
     const SA_Range& range,
     uint8_t c) const
 {
+    if (range.is_single()) {
+        if (range.orientation() != SA_Range::Orientation::Right)
+            throw std::logic_error(
+                "BwaFMDIndex::extend_right requires a right-oriented single range");
+        return extend_single_one(range, static_cast<uint8_t>(3 - c));
+    }
+
     return extend_all_one(range, static_cast<uint8_t>(3 - c), 0);
 }
 

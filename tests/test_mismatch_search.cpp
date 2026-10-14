@@ -1,3 +1,4 @@
+#include "exact_search.hpp"
 #include "mismatch_search.hpp"
 
 #include <algorithm>
@@ -78,16 +79,19 @@ uint64_t expected_count(
     const std::string& query,
     unsigned mismatches,
     Direction direction,
-    const std::vector<std::string>& patterns)
+    const std::vector<std::string>& patterns,
+    size_t seed_length = 1)
 {
     uint64_t count = 0;
 
-    // The first consumed base is already fixed by the seed.
-    const size_t seed_pos =
-        direction == Direction::Right ? 0 : query.size() - 1;
+    assert(seed_length > 0 && seed_length <= query.size());
+    const size_t seed_begin = direction == Direction::Right
+        ? 0
+        : query.size() - seed_length;
 
     for (const auto& candidate : patterns) {
-        if (candidate[seed_pos] != query[seed_pos])
+        if (candidate.compare(seed_begin, seed_length,
+                              query, seed_begin, seed_length) != 0)
             continue;
 
         if (hamming_distance(query, candidate) == mismatches)
@@ -129,6 +133,43 @@ uint64_t observed_count(
     return count;
 }
 
+uint64_t observed_count_from_exact_seed(
+    const BwaFMDIndex& index,
+    const std::string& query,
+    unsigned mismatches,
+    Direction direction,
+    size_t seed_length)
+{
+    assert(seed_length > 0 && seed_length < query.size());
+
+    const size_t seed_begin = direction == Direction::Right
+        ? 0
+        : query.size() - seed_length;
+    const std::string seed_read = query.substr(seed_begin, seed_length);
+    SA_Range seed = search_exact_bidirectional_seed(
+        index, seed_read, direction);
+
+    if (!seed.is_bidirectional() ||
+        seed.position() != seed_length - 1) {
+        std::cerr << "Exact bidirectional seed has invalid search state\n";
+        std::abort();
+    }
+
+    std::vector<SA_Range> hits;
+    std::vector<SA_Range> rejects;
+    search_unidirectional(
+        query, seed, static_cast<int>(mismatches), 0,
+        hits, rejects, direction);
+
+    uint64_t count = 0;
+    for (const auto& hit : hits) {
+        assert(!hit.empty());
+        assert(hit.mismatch_count() == mismatches);
+        count += hit.size();
+    }
+    return count;
+}
+
 void test_query(
     const BwaFMDIndex& index,
     const std::string& query,
@@ -152,6 +193,30 @@ void test_query(
                     << "  expected total interval size: " << expected << '\n'
                     << "  observed total interval size: " << observed << '\n';
                 std::abort();
+            }
+
+            // A multi-base seed must remain a paired FMD range when passed
+            // to mismatch search.  This covers exact continuation and the
+            // one-mismatch branching path from an exact bidirectional seed.
+            if (query.size() > 2) {
+                constexpr size_t seed_length = 2;
+                const uint64_t seeded_expected = expected_count(
+                    index, query, mismatches, direction, patterns, seed_length);
+                const uint64_t seeded_observed = observed_count_from_exact_seed(
+                    index, query, mismatches, direction, seed_length);
+
+                if (seeded_expected != seeded_observed) {
+                    std::cerr
+                        << "Exact-seed mismatch-search count failure\n"
+                        << "  query: " << query << '\n'
+                        << "  direction: "
+                        << (direction == Direction::Right ? "right" : "left")
+                        << '\n'
+                        << "  mismatches: " << mismatches << '\n'
+                        << "  expected total interval size: " << seeded_expected << '\n'
+                        << "  observed total interval size: " << seeded_observed << '\n';
+                    std::abort();
+                }
             }
         }
     }

@@ -4,22 +4,27 @@
 #include <string>
 
 /*
- * Exact unidirectional search of a read or seed substring.
+ * Exact unidirectional search using a single SA interval.
  *
- * Direction::Right scans read[0] .. read[n-1].
- * Direction::Left scans read[n-1] .. read[0].
+ * Direction::Right scans read[0] .. read[n-1] and stores the interval
+ * on the reverse-complement side (Orientation::Right).
+ * Direction::Left scans read[n-1] .. read[0] and stores the primary
+ * interval (Orientation::Left).
  *
- * The returned SA_Range stores position() == read.size() - 1 for a
- * completed non-empty search, so it can be passed to the mismatch
- * extension routine together with the full read.  position() is the
- * number of consumed characters minus one in scan coordinates, not a
- * natural left-to-right read coordinate.
- *
- * Once an interval becomes a singleton, subsequent extensions use the
- * dedicated singleton fast path.  No branching or reject ranges are
- * generated here.
+ * position() is the number of consumed characters minus one in scan
+ * coordinates. No companion interval or branches are constructed.
  */
 SA_Range search_exact_unidirectional(
+    const BwaFMDIndex& index,
+    const std::string& read,
+    Direction direction);
+
+/*
+ * Exact search that returns a paired FMD range suitable for the current
+ * mismatch-search/branching pipeline. Use this when the result will be
+ * passed to search_unidirectional().
+ */
+SA_Range search_exact_bidirectional_seed(
     const BwaFMDIndex& index,
     const std::string& read,
     Direction direction);

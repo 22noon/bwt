@@ -43,6 +43,18 @@ public:
     SA_Range initial_range(uint8_t c) const;
 
     /*
+     * Create one side of the FMD state for a single logical base.
+     *
+     * Orientation::Left stores the primary interval for c.  Orientation::Right
+     * stores the companion interval for RC(c), so it uses complement(c) in
+     * BWA's alphabet.  Unlike initial_range(), this does not initialise the
+     * other FMD interval.
+     */
+    SA_Range initial_single_range(
+        uint8_t c,
+        SA_Range::Orientation orientation) const;
+
+    /*
      * Logical extension operations.
      *
      * These always mean:
@@ -110,4 +122,8 @@ private:
         const SA_Range& range,
         uint8_t c,
         int is_back) const;
+
+    SA_Range extend_single_one(
+        const SA_Range& range,
+        uint8_t bwt_c) const;
 };
