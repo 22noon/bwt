@@ -6,6 +6,8 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+option(BUILD_BENCHMARKS "Build standalone benchmark executables" OFF)
+
 set(BWA_API_DIR "${CMAKE_CURRENT_SOURCE_DIR}/API" CACHE PATH "Directory containing bwt.h, bntseq.h, bwt.c, bntseq.c, utils.c")
 
 if(NOT EXISTS "${BWA_API_DIR}/bwt.h")
@@ -75,6 +77,16 @@ target_link_libraries(test_bwa_branch PRIVATE fm_range)
 target_link_libraries(test_bwa_locate PRIVATE fm_range pthread m)
 target_link_libraries(test_mismatch_search PRIVATE fm_range)
 target_link_libraries(test_fast_exact_search PRIVATE fm_range)
+
+if(BUILD_BENCHMARKS)
+    add_executable(bench_exact_search
+        benchmarks/bench_exact_search.cpp
+    )
+    target_link_libraries(bench_exact_search PRIVATE fm_range)
+    target_compile_definitions(bench_exact_search PRIVATE
+        BENCH_BUILD_TYPE="${CMAKE_BUILD_TYPE}"
+    )
+endif()
 
 enable_testing()
 add_test(NAME test_sa_range COMMAND test_sa_range)
