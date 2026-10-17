@@ -49,6 +49,21 @@ public:
         return branches_[c];
     }
 
+    void set_branch(uint8_t c, const SA_Range& range)
+    {
+        if (c >= ALPHABET_SIZE)
+            throw std::out_of_range(
+                "BranchSet: base must be 0..3");
+
+        branches_[c] = range;
+
+        const uint8_t bit = uint8_t{1} << c;
+        if (range.empty())
+            mask_ &= static_cast<uint8_t>(~bit);
+        else
+            mask_ |= bit;
+    }
+
     BitMaskRange<uint8_t> possible_branches() const noexcept
     {
         return bitmask_range(mask_);

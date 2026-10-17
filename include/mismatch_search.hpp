@@ -32,3 +32,13 @@ void search_unidirectional(
     std::vector<SA_Range>& Rejects,
     Direction direction,
     bool capture_reference_bases = false);
+
+void extend(
+    const std::string& read,
+    const SA_Range& seed,
+    int Count,
+    int MAXHITS,
+    std::vector<SA_Range>& Hit_List,
+    std::vector<SA_Range>& Rejects,
+    Direction direction,
+    bool capture_reference_bases = false);

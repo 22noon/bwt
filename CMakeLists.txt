@@ -69,6 +69,10 @@ add_executable(test_mismatch_search
 add_executable(test_fast_exact_search
     tests/test_fast_exact_search.cpp
 )
+add_executable(test_single_interval_branch
+    tests/test_single_interval_branch.cpp
+)
+target_link_libraries(test_single_interval_branch PRIVATE fm_range)
 target_link_libraries(test_sa_range PRIVATE fm_range)
 target_link_libraries(test_bwa_extend_diagnostic PRIVATE fm_range)
 target_link_libraries(test_exact_search PRIVATE fm_range)
@@ -152,3 +156,4 @@ add_test(NAME test_bwa_branch COMMAND test_bwa_branch "${EXACT_FIXTURE_PREFIX}.b
 add_test(NAME test_bwa_locate COMMAND test_bwa_locate "${LOCATE_FIXTURE_PREFIX}")
 add_test(NAME test_mismatch_search COMMAND test_mismatch_search "${EXACT_FIXTURE_PREFIX}.bwt" "${EXACT_FIXTURE_PREFIX}.sa" "${EXACT_FIXTURE_FASTA}")
 add_test(NAME test_fast_exact_search COMMAND test_fast_exact_search "${EXACT_FIXTURE_PREFIX}.bwt" "${EXACT_FIXTURE_PREFIX}.sa")
+add_test( NAME test_single_interval_branch COMMAND test_single_interval_branch "${EXACT_FIXTURE_PREFIX}.bwt" "${EXACT_FIXTURE_PREFIX}.sa")

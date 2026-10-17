@@ -41,43 +41,70 @@ BranchSet BwaFMDIndex::branch(
     const SA_Range& range,
     Direction direction) const
 {
-    if (!range.is_bidirectional())
+    if (!range.is_single() && !range.is_bidirectional())
         throw std::logic_error(
-            "BwaFMDIndex::branch requires a bidirectional range");
-
-    bwtintv_t ik = to_bwa(range);
-    bwtintv_t ok[4]{};
+            "BwaFMDIndex::branch: unsupported range mode");
 
     const bool left = direction == Direction::Left;
+    const int is_back = left ? 1 : 0;
 
-    bwt_extend(
-        bwt_,
-        &ik,
-        ok,
-        left ? 1 : 0);
+    bwtintv_t ik{};
+
+    if (range.is_bidirectional()) {
+        ik = to_bwa(range);
+    } else {
+        const auto expected_orientation =
+            left
+                ? SA_Range::Orientation::Left
+                : SA_Range::Orientation::Right;
+
+        if (range.orientation() != expected_orientation)
+            throw std::invalid_argument(
+                "BwaFMDIndex::branch: single interval orientation "
+                "does not match extension direction");
+
+        const Interval interval = range.interval();
+
+        // Populate only the active interval. The inactive start is
+        // irrelevant to the active child intervals returned by bwt_extend.
+        ik.x[!is_back] = static_cast<bwtint_t>(interval.l);
+        ik.x[2] = static_cast<bwtint_t>(interval.size());
+    }
+
+    bwtintv_t ok[4]{};
+    bwt_extend(bwt_, &ik, ok, is_back);
 
     BranchSet result;
 
     for (uint8_t c = 0; c < 4; ++c) {
-        /*
-         * BWA's bwt_extend() uses the logical base directly for
-         * left extension, but the complementary base for right
-         * extension.
-         */
+        // BWA indexes right-extension branches by the complemented base.
         const uint8_t fmd_c =
             left ? c : static_cast<uint8_t>(3 - c);
 
         const auto& v = ok[fmd_c];
 
-        result.branches_[c] =
-            SA_Range::bidirectional(
-                this,
-                from_bwa_primary(v),
-                from_bwa_companion(v));
+        if (range.is_bidirectional()) {
+            result.branches_[c] =
+                SA_Range::bidirectional(
+                    this,
+                    from_bwa_primary(v),
+                    from_bwa_companion(v));
+        } else {
+            const bwtint_t start = v.x[!is_back];
+            const bwtint_t size = v.x[2];
+
+            result.branches_[c] =
+                SA_Range::single(
+                    this,
+                    Interval{
+                        static_cast<uint64_t>(start),
+                        static_cast<uint64_t>(start + size)
+                    },
+                    range.orientation());
+        }
 
         if (v.x[2] != 0)
-            result.mask_ |=
-                static_cast<uint8_t>(1u << c);
+            result.mask_ |= static_cast<uint8_t>(1u << c);
     }
 
     return result;
@@ -359,17 +386,14 @@ SA_Range BwaFMDIndex::extend_cardinality_one(
         : extend_right_bidirectional_singleton(range, c, out);
     if (ok)
         return out;
+    if (ok)
+        return out;
 
-    // Keep BWA's child insertion boundaries for unsuccessful extensions.
-    bwtintv_t in = to_bwa(range);
-    bwtintv_t children[4]{};
-    const int is_back = left ? 1 : 0;
-    bwt_extend(bwt_, &in, children, is_back);
-    const uint8_t fmd_c = left ? c : static_cast<uint8_t>(3 - c);
+    // No matching row: insertion-point coordinates are irrelevant.
     return SA_Range::bidirectional(
         this,
-        from_bwa_primary(children[fmd_c]),
-        from_bwa_companion(children[fmd_c]));
+        Interval{0, 0},
+        Interval{0, 0});
 }
 
 void BwaFMDIndex::extend_left_all(

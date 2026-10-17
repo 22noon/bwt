@@ -60,9 +60,28 @@ SA_Range child_with_state(
     return child;
 }
 
+
+SA_Range extend_expected_base(
+    const SA_Range& range,
+    uint8_t base,
+    Direction direction)
+{
+    return direction == Direction::Left
+        ? range.extend_left(base)
+        : range.extend_right(base);
+}
+
+BranchSet branch_range(
+    const SA_Range& range,
+    Direction direction)
+{
+    return range.branch(direction);
+}
+
+
 } // namespace
 
-void search_unidirectional(
+static void extend_impl(
     const std::string& read,
     const SA_Range& seed,
     int Count,
@@ -75,9 +94,23 @@ void search_unidirectional(
     if (Count < 0)
         throw std::invalid_argument("Count must be non-negative");
     if (read.empty()) return;
-    if (!seed.index() || !seed.is_bidirectional())
+    if (!seed.index())
+    throw std::invalid_argument(
+        "extend requires a valid index");
+    if (seed.is_single()) {
+        const auto expected_orientation =
+            direction == Direction::Left
+                ? SA_Range::Orientation::Left
+                : SA_Range::Orientation::Right;
+
+        if (seed.orientation() != expected_orientation)
+            throw std::invalid_argument(
+                "extend: single seed orientation does not match "
+                "extension direction");
+    } else if (!seed.is_bidirectional()) {
         throw std::invalid_argument(
-            "search_unidirectional requires a bidirectional FMD seed");
+            "extend: unsupported SA_Range mode");
+    }
     if (seed.position() >= read.size())
         throw std::invalid_argument("seed position is outside the read");
     if (seed.position() == read.size() - 1) {
@@ -111,9 +144,7 @@ void search_unidirectional(
         if (at_threshold) {
             // Frozen design: exact extension first; branch only if its
             // cardinality differs from the parent.
-            SA_Range exact = direction == Direction::Left
-                ? current.extend_left(expected_symbol)
-                : current.extend_right(expected_symbol);
+            SA_Range exact = extend_expected_base( current, expected_symbol, direction);
 
             if (current.size() != exact.size()) {
                 // This is a conservative threshold deferral, not an assertion
@@ -144,7 +175,7 @@ void search_unidirectional(
         }
 
         // Below threshold, explore all available nucleotide branches.
-        const BranchSet branches = current.branch(direction);
+        const BranchSet branches = branch_range(current, direction);
         for (uint8_t c = 0; c < 4; ++c) {
             if (!branches.has_branch(c)) continue;
             if (current.has_forbidden_base() &&
@@ -176,4 +207,48 @@ void search_unidirectional(
             }
         }
     }
+}
+
+
+void extend(
+    const std::string& read,
+    const SA_Range& seed,
+    int Count,
+    int MAXHITS,
+    std::vector<SA_Range>& Hit_List,
+    std::vector<SA_Range>& Rejects,
+    Direction direction,
+    bool capture_reference_bases)
+{
+    extend_impl(
+        read,
+        seed,
+        Count,
+        MAXHITS,
+        Hit_List,
+        Rejects,
+        direction,
+        capture_reference_bases);
+}
+
+
+void search_unidirectional(
+    const std::string& read,
+    const SA_Range& seed,
+    int Count,
+    int MAXHITS,
+    std::vector<SA_Range>& Hit_List,
+    std::vector<SA_Range>& Rejects,
+    Direction direction,
+    bool capture_reference_bases)
+{
+    extend(
+        read,
+        seed,
+        Count,
+        MAXHITS,
+        Hit_List,
+        Rejects,
+        direction,
+        capture_reference_bases);
 }
