@@ -95,8 +95,10 @@ public:
     const bwt_t* bwt() const noexcept { return bwt_; }
     const bntseq_t* reference_metadata() const noexcept { return bns_; }
 
-    bool extend_left_singleton( const SA_Range& range, uint8_t c, SA_Range& out) const;
-    bool extend_right_singleton( const SA_Range& range, uint8_t c, SA_Range& out) const;
+    bool extend_left_bidirectional_singleton(
+        const SA_Range& range, uint8_t c, SA_Range& out) const;
+    bool extend_right_bidirectional_singleton(
+        const SA_Range& range, uint8_t c, SA_Range& out) const;
 
     /*
      * Locate every suffix-array row in the primary interval.
@@ -118,12 +120,15 @@ private:
     const bwt_t* bwt_ = nullptr;
     const bntseq_t* bns_ = nullptr;
 
-    SA_Range extend_all_one(
-        const SA_Range& range,
-        uint8_t c,
-        int is_back) const;
-
-    SA_Range extend_single_one(
+    SA_Range extend_single_interval_one(
         const SA_Range& range,
         uint8_t bwt_c) const;
+    SA_Range extend_bidirectional_one(
+        const SA_Range& range,
+        uint8_t c,
+        bool extend_left) const;
+    SA_Range extend_cardinality_one(
+        const SA_Range& range,
+        uint8_t c,
+        bool extend_left) const;
 };

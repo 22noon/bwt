@@ -71,7 +71,7 @@ SA_Range exact_search(
         if (range.size() == 1) {
             SA_Range next;
 
-            if (!index.extend_right_singleton(range, c, next))
+            if (!index.extend_right_bidirectional_singleton(range, c, next))
                 return SA_Range::bidirectional(&index, {}, {});
 
             range = next;
@@ -244,7 +244,7 @@ int main(int argc, char** argv)
 
     /*
      * Becomes singleton at "TT", then exercises
-     * extend_right_singleton() for the final G.
+     * extend_right_bidirectional_singleton() for the final G.
      */
     check_query(
         index,
@@ -253,7 +253,7 @@ int main(int argc, char** argv)
 
     /*
      * Becomes singleton at "GC", then exercises
-     * extend_right_singleton() for the final A.
+     * extend_right_bidirectional_singleton() for the final A.
      */
     check_query(
         index,

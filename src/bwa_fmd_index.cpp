@@ -129,27 +129,79 @@ SA_Range BwaFMDIndex::initial_single_range(
         orientation);
 }
 
-SA_Range BwaFMDIndex::extend_single_one(
+
+SA_Range BwaFMDIndex::extend_single_interval_one(
     const SA_Range& range,
     uint8_t bwt_c) const
 {
     if (!range.is_single())
         throw std::logic_error(
-            "BwaFMDIndex::extend_single_one requires a single range");
+            "BwaFMDIndex::extend_single_interval_one requires a single range");
 
     if (bwt_c > 3)
         throw std::invalid_argument(
-            "BwaFMDIndex::extend_single_one: base must be 0..3");
+            "BwaFMDIndex::extend_single_interval_one: base must be 0..3");
 
     const Interval interval = range.interval();
+
+    /*
+     * Fast path for a singleton SA interval.
+     *
+     * The interval contains one BWT row. Its preceding BWT symbol
+     * either matches bwt_c, producing one row after LF extension,
+     * or does not match, producing an empty interval.
+     *
+     * The BWT representation omits the sentinel symbol from its
+     * packed BWT string, so the primary row must be checked before
+     * accessing bwt_B0().
+     */
+    if (interval.size() == 1) {
+        const bwtint_t row =
+            static_cast<bwtint_t>(interval.l);
+
+        const bwtint_t rank_end =
+            row == 0
+                ? static_cast<bwtint_t>(-1)
+                : row - 1;
+
+        const bwtint_t rank =
+            bwt_occ(bwt_, rank_end, bwt_c);
+
+        const bwtint_t start =
+            bwt_->L2[bwt_c] + 1 + rank;
+
+        bool matches = false;
+
+        if (row != bwt_->primary) {
+            const bwtint_t packed_row =
+                row - (row > bwt_->primary);
+
+            matches =
+                static_cast<uint8_t>(
+                    bwt_B0(bwt_, packed_row)) == bwt_c;
+        }
+
+        const bwtint_t end =
+            matches ? start + 1 : start;
+
+        return SA_Range::single(
+            this,
+            Interval{
+                static_cast<uint64_t>(start),
+                static_cast<uint64_t>(end)
+            },
+            range.orientation());
+    }
+
+    /*
+     * General single-interval extension.
+     *
+     * Keep the existing two-rank implementation for intervals
+     * containing more than one row.
+     */
     bwtint_t before = 0;
     bwtint_t through = 0;
 
-    /*
-     * This is an ordinary one-symbol backward extension.  bwt_2occ()
-     * obtains both rank values for the one requested symbol without the
-     * four-way bwt_extend() branch calculation.
-     */
     bwt_2occ(
         bwt_,
         static_cast<bwtint_t>(interval.l - 1),
@@ -158,77 +210,166 @@ SA_Range BwaFMDIndex::extend_single_one(
         &before,
         &through);
 
-    const bwtint_t start = bwt_->L2[bwt_c] + 1 + before;
+    const bwtint_t start =
+        bwt_->L2[bwt_c] + 1 + before;
+
     return SA_Range::single(
         this,
         Interval{
             static_cast<uint64_t>(start),
-            static_cast<uint64_t>(bwt_->L2[bwt_c] + 1 + through)
+            static_cast<uint64_t>(
+                bwt_->L2[bwt_c] + 1 + through)
         },
         range.orientation());
 }
 
-SA_Range BwaFMDIndex::extend_all_one(
+
+SA_Range BwaFMDIndex::extend_bidirectional_one(
     const SA_Range& range,
     uint8_t c,
-    int is_back) const
+    bool left) const
 {
     if (!range.is_bidirectional())
         throw std::logic_error(
-            "BwaFMDIndex extension requires a bidirectional/FMD range");
+            "BwaFMDIndex extension requires a bidirectional range");
 
     if (c > 3)
         throw std::invalid_argument(
             "BwaFMDIndex extension: base must be 0..3");
 
-    bwtintv_t ik = to_bwa(range);
-    bwtintv_t ok[4]{};
+    const bwtintv_t ik = to_bwa(range);
 
-    /*
-     * BWA convention:
-     *
-     *   is_back = 1:
-     *       logical left extension.
-     *
-     *   is_back = 0:
-     *       logical right extension.
-     *
-     * bwt_extend() handles the paired FMD interval internally.
-     */
-    bwt_extend(bwt_, &ik, ok, is_back);
+    // BWA uses the primary interval for left extension and the
+    // companion interval for right extension.
+    const int is_back = left ? 1 : 0;
+    const uint8_t fmd_c =
+        left ? c : static_cast<uint8_t>(3 - c);
 
-    return SA_Range::bidirectional(
-        this,
-        from_bwa_primary(ok[c]),
-        from_bwa_companion(ok[c]));
+    bwtint_t tk[4], tl[4];
+
+    bwt_2occ4(
+        bwt_,
+        ik.x[!is_back] - 1,
+        ik.x[!is_back] - 1 + ik.x[2],
+        tk,
+        tl);
+
+    // Calculate the requested child's interval on the side
+    // being backward-extended.
+    const bwtint_t child_size = tl[fmd_c] - tk[fmd_c];
+    const bwtint_t child_start =
+        bwt_->L2[fmd_c] + 1 + tk[fmd_c];
+
+    // BWA's sentinel correction applies to the other interval.
+    const bool contains_sentinel =
+        ik.x[!is_back] <= bwt_->primary &&
+        ik.x[!is_back] + ik.x[2] - 1 >= bwt_->primary;
+
+    bwtint_t other_start =
+        ik.x[is_back] + (contains_sentinel ? 1 : 0);
+
+    // Position the selected child in the companion interval.
+    // BWA orders the child intervals T, G, C, A, so the
+    // sizes of all branches with larger alphabet codes precede it.
+    for (int j = 3; j > fmd_c; --j)
+        other_start += tl[j] - tk[j];
+
+    const Interval active{
+        static_cast<uint64_t>(child_start),
+        static_cast<uint64_t>(child_start + child_size)
+    };
+
+    const Interval other{
+        static_cast<uint64_t>(other_start),
+        static_cast<uint64_t>(other_start + child_size)
+    };
+
+    return left
+        ? SA_Range::bidirectional(this, active, other)
+        : SA_Range::bidirectional(this, other, active);
 }
+
 
 SA_Range BwaFMDIndex::extend_left(
     const SA_Range& range,
     uint8_t c) const
 {
+    if (c > 3)
+        throw std::invalid_argument("BwaFMDIndex::extend_left: base must be 0..3");
+
+    if (range.empty())
+        return range.is_single()
+            ? SA_Range::single(this, range.interval(), range.orientation())
+            : SA_Range::bidirectional(this, range.primary_interval(), range.companion_interval());
+
+    if (range.size() == 1)
+        return extend_cardinality_one(range, c, true);
+
     if (range.is_single()) {
         if (range.orientation() != SA_Range::Orientation::Left)
             throw std::logic_error(
                 "BwaFMDIndex::extend_left requires a left-oriented single range");
-        return extend_single_one(range, c);
+        return extend_single_interval_one(range, c);
     }
-
-    return extend_all_one(range, c, 1);
+    return extend_bidirectional_one(range, c, true);
 }
 
 SA_Range BwaFMDIndex::extend_right(
     const SA_Range& range,
     uint8_t c) const
 {
+    if (c > 3)
+        throw std::invalid_argument("BwaFMDIndex::extend_right: base must be 0..3");
+
+    if (range.empty())
+        return range.is_single()
+            ? SA_Range::single(this, range.interval(), range.orientation())
+            : SA_Range::bidirectional(this, range.primary_interval(), range.companion_interval());
+
+    if (range.size() == 1)
+        return extend_cardinality_one(range, c, false);
+
     if (range.is_single()) {
         if (range.orientation() != SA_Range::Orientation::Right)
             throw std::logic_error(
                 "BwaFMDIndex::extend_right requires a right-oriented single range");
-        return extend_single_one(range, static_cast<uint8_t>(3 - c));
+        return extend_single_interval_one(range, static_cast<uint8_t>(3 - c));
+    }
+    return extend_bidirectional_one(range, c, false);
+}
+
+SA_Range BwaFMDIndex::extend_cardinality_one(
+    const SA_Range& range,
+    uint8_t c,
+    bool left) const
+{
+    if (range.size() != 1 || range.empty())
+        throw std::logic_error("extend_cardinality_one requires a non-empty cardinality-one range");
+
+    if (range.is_single()) {
+        if (range.orientation() != (left ? SA_Range::Orientation::Left : SA_Range::Orientation::Right))
+            throw std::logic_error("single interval orientation does not match extension direction");
+        return extend_single_interval_one(
+            range, left ? c : static_cast<uint8_t>(3 - c));
     }
 
-    return extend_all_one(range, static_cast<uint8_t>(3 - c), 0);
+    SA_Range out;
+    const bool ok = left
+        ? extend_left_bidirectional_singleton(range, c, out)
+        : extend_right_bidirectional_singleton(range, c, out);
+    if (ok)
+        return out;
+
+    // Keep BWA's child insertion boundaries for unsuccessful extensions.
+    bwtintv_t in = to_bwa(range);
+    bwtintv_t children[4]{};
+    const int is_back = left ? 1 : 0;
+    bwt_extend(bwt_, &in, children, is_back);
+    const uint8_t fmd_c = left ? c : static_cast<uint8_t>(3 - c);
+    return SA_Range::bidirectional(
+        this,
+        from_bwa_primary(children[fmd_c]),
+        from_bwa_companion(children[fmd_c]));
 }
 
 void BwaFMDIndex::extend_left_all(
@@ -282,22 +423,22 @@ void BwaFMDIndex::extend_right_all(
     }
 }
 
-bool BwaFMDIndex::extend_left_singleton(
+bool BwaFMDIndex::extend_left_bidirectional_singleton(
     const SA_Range& range,
     uint8_t c,
     SA_Range& out) const
 {
     if (!range.is_bidirectional())
         throw std::logic_error(
-            "BwaFMDIndex::extend_left_singleton requires a bidirectional range");
+            "BwaFMDIndex::extend_left_bidirectional_singleton requires a bidirectional range");
 
     if (range.size() != 1)
         throw std::logic_error(
-            "BwaFMDIndex::extend_left_singleton requires a singleton range");
+            "BwaFMDIndex::extend_left_bidirectional_singleton requires a singleton range");
 
     if (c > 3)
         throw std::invalid_argument(
-            "BwaFMDIndex::extend_left_singleton: base must be 0..3");
+            "BwaFMDIndex::extend_left_bidirectional_singleton: base must be 0..3");
 
     const auto p = range.primary_interval();
     const auto q = range.companion_interval();
@@ -356,22 +497,22 @@ bool BwaFMDIndex::extend_left_singleton(
     return true;
 }
 
-bool BwaFMDIndex::extend_right_singleton(
+bool BwaFMDIndex::extend_right_bidirectional_singleton(
     const SA_Range& range,
     uint8_t c,
     SA_Range& out) const
 {
     if (!range.is_bidirectional())
         throw std::logic_error(
-            "BwaFMDIndex::extend_right_singleton requires a bidirectional range");
+            "BwaFMDIndex::extend_right_bidirectional_singleton requires a bidirectional range");
 
     if (range.size() != 1)
         throw std::logic_error(
-            "BwaFMDIndex::extend_right_singleton requires a singleton range");
+            "BwaFMDIndex::extend_right_bidirectional_singleton requires a singleton range");
 
     if (c > 3)
         throw std::invalid_argument(
-            "BwaFMDIndex::extend_right_singleton: base must be 0..3");
+            "BwaFMDIndex::extend_right_bidirectional_singleton: base must be 0..3");
 
     const auto p = range.primary_interval();
     const auto q = range.companion_interval();

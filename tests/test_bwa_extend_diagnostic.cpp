@@ -34,13 +34,21 @@ static void assert_same(const SA_Range& r, const bwtintv_t& v)
     const auto p = r.primary_interval();
     const auto q = r.companion_interval();
 
+    assert(p.size() == static_cast<uint64_t>(v.x[2]));
+    assert(q.size() == static_cast<uint64_t>(v.x[2]));
+    assert(r.size() == static_cast<uint64_t>(v.x[2]));
+
+    // Empty intervals can have different, equally valid insertion points.
+    // Keep exact endpoint checks for every non-empty result.
+    if (v.x[2] == 0)
+        return;
+
     assert(p.l == static_cast<uint64_t>(v.x[0]));
     assert(p.r == static_cast<uint64_t>(v.x[0] + v.x[2]));
 
     assert(q.l == static_cast<uint64_t>(v.x[1]));
     assert(q.r == static_cast<uint64_t>(v.x[1] + v.x[2]));
 
-    assert(r.size() == static_cast<uint64_t>(v.x[2]));
 }
 
 static bwtintv_t direct_extend(
@@ -219,10 +227,10 @@ static void check_singleton(
         SA_Range right_out;
 
         const bool left_success =
-            index.extend_left_singleton(range, c, left_out);
+            index.extend_left_bidirectional_singleton(range, c, left_out);
 
         const bool right_success =
-            index.extend_right_singleton(range, c, right_out);
+            index.extend_right_bidirectional_singleton(range, c, right_out);
 
         const bool expected_left = left_ok[c].x[2] == 1;
 
@@ -250,11 +258,65 @@ static void check_singleton(
             return;
         }
 
-        if (left_success)
+        if (left_success) {
             assert_same(left_out, left_ok[c]);
+            assert_same(index.extend_left(range, c), left_ok[c]);
+        } else {
+            assert(index.extend_left(range, c).empty());
+        }
 
-        if (right_success)
+        if (right_success) {
             assert_same(right_out, right_ok[right_bwa_c]);
+            assert_same(index.extend_right(range, c), right_ok[right_bwa_c]);
+        } else {
+            assert(index.extend_right(range, c).empty());
+        }
+
+
+    }
+}
+
+static void check_single_interval_dispatch(
+    const BwaFMDIndex& index,
+    const bwt_t* bwt,
+    const SA_Range& paired)
+{
+    if (paired.size() != 1)
+        return;
+
+    for (const auto orientation : {SA_Range::Orientation::Left,
+                                   SA_Range::Orientation::Right}) {
+        const SA_Range single = paired.to_single(orientation);
+        for (uint8_t c = 0; c < 4; ++c) {
+            const uint8_t bwt_c = orientation == SA_Range::Orientation::Left
+                ? c : static_cast<uint8_t>(3 - c);
+            const auto iv = single.interval();
+            const bwtint_t row = static_cast<bwtint_t>(iv.l);
+            bool expected_match = false;
+            const bwtint_t start = bwt->L2[bwt_c] + 1 + bwt_occ(
+                bwt, row == 0 ? static_cast<bwtint_t>(-1) : row - 1, bwt_c);
+            if (row != bwt->primary) {
+                const bwtint_t packed = row - (row > bwt->primary);
+                expected_match = bwt_B0(bwt, packed) == bwt_c;
+            }
+
+            SA_Range with_state = single;
+            with_state.set_position(19);
+            with_state.add_mismatch(2, 'G');
+            with_state.set_forbidden_base('A');
+            with_state.set_unidirectional(true);
+            const SA_Range out = orientation == SA_Range::Orientation::Left
+                ? with_state.extend_left(c) : with_state.extend_right(c);
+            assert(out.size() == (expected_match ? 1u : 0u));
+            assert(out.position() == 19);
+            assert(out.mismatch_count() == 1);
+            assert(out.forbidden_base() == 'A');
+            assert(out.is_unidirectional());
+            if (expected_match) {
+                assert(out.interval().l == static_cast<uint64_t>(start));
+                assert(out.interval().r == static_cast<uint64_t>(start + 1));
+            }
+        }
     }
 }
 
@@ -311,7 +373,10 @@ int main(int argc, char** argv)
             << " singleton states...\n";
 
         for (const auto& s : singleton_states)
+        {
             check_singleton(index, bwt, s);
+            check_single_interval_dispatch(index, bwt, s);
+        }
 
         std::cout << "Singleton fast-path checks passed.\n";
     }

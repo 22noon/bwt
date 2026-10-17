@@ -42,17 +42,22 @@ bool same_range(
 {
     if (a.is_bidirectional() != b.is_bidirectional())
         return false;
-
     if (a.is_bidirectional()) {
-        return
-            a.primary_interval().l ==
-                b.primary_interval().l &&
-            a.primary_interval().r ==
-                b.primary_interval().r &&
-            a.companion_interval().l ==
-                b.companion_interval().l &&
-            a.companion_interval().r ==
-                b.companion_interval().r;
+        const auto ap = a.primary_interval();
+        const auto aq = a.companion_interval();
+        const auto bp = b.primary_interval();
+        const auto bq = b.companion_interval();
+
+        const auto same_interval = [](const Interval& x,
+                                      const Interval& y) {
+            if (x.size() != y.size())
+                return false;
+
+            return x.empty() || (x.l == y.l && x.r == y.r);
+        };
+
+        return same_interval(ap, bp) &&
+               same_interval(aq, bq);
     }
 
     return
@@ -224,20 +229,31 @@ void check_branch_set(
          */
         const SA_Range& actual =
             branches[c];
+            if (!same_range(actual, expected)) {
+                std::cerr
+                    << "Branch range mismatch\n"
+                    << "  pattern:   " << pattern << '\n'
+                    << "  direction: "
+                    << (direction == Direction::Left ? "left" : "right") << '\n'
+                    << "  base:      " << base_name(c) << '\n';
 
-        if (!same_range(actual, expected)) {
-            std::cerr
-                << "Branch range mismatch\n"
-                << "  pattern:   " << pattern << '\n'
-                << "  direction: "
-                << (direction == Direction::Left
-                    ? "left"
-                    : "right")
-                << '\n'
-                << "  base:      " << base_name(c) << '\n';
+                const auto ap = actual.primary_interval();
+                const auto aq = actual.companion_interval();
+                const auto ep = expected.primary_interval();
+                const auto eq = expected.companion_interval();
 
-            std::abort();
-        }
+                std::cerr
+                    << "  branch primary:   [" << ap.l << ',' << ap.r
+                    << ") size=" << ap.size() << '\n'
+                    << "  branch companion: [" << aq.l << ',' << aq.r
+                    << ") size=" << aq.size() << '\n'
+                    << "  extend primary:   [" << ep.l << ',' << ep.r
+                    << ") size=" << ep.size() << '\n'
+                    << "  extend companion: [" << eq.l << ',' << eq.r
+                    << ") size=" << eq.size() << '\n';
+
+                std::abort();
+            }
     }
 
     /*

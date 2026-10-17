@@ -53,9 +53,9 @@ void enumerate(const BwaFMDIndex& index, const std::string& text,
             index, pattern, Direction::Left);
 
         const SA_Range bidirectional_right =
-            search_exact_bidirectional_seed(index, pattern, Direction::Right);
+            search_exact_bidirectional(index, pattern, Direction::Right);
         const SA_Range bidirectional_left =
-            search_exact_bidirectional_seed(index, pattern, Direction::Left);
+            search_exact_bidirectional(index, pattern, Direction::Left);
         const Interval right_expected = bidirectional_right.companion_interval();
         const Interval left_expected = bidirectional_left.primary_interval();
 

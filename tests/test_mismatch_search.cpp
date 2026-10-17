@@ -782,7 +782,7 @@ uint64_t observed_count_from_exact_seed(
         ? 0
         : query.size() - seed_length;
     const std::string seed_read = query.substr(seed_begin, seed_length);
-    SA_Range seed = search_exact_bidirectional_seed(
+    SA_Range seed = search_exact_bidirectional(
         index, seed_read, direction);
 
     if (!seed.is_bidirectional() ||

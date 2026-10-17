@@ -74,10 +74,33 @@ std::string iv(const Interval& x) {
     std::cerr<<"\nFAIL: "<<s<<"\n";
     std::abort();
 }
-bool same(const SA_Range& a,const SA_Range& b) {
-    auto ap=a.primary_interval(), aq=a.companion_interval();
-    auto bp=b.primary_interval(), bq=b.companion_interval();
-    return ap.l==bp.l&&ap.r==bp.r&&aq.l==bq.l&&aq.r==bq.r;
+
+bool same(const SA_Range& a, const SA_Range& b)
+{
+    const auto ap = a.primary_interval();
+    const auto aq = a.companion_interval();
+    const auto bp = b.primary_interval();
+    const auto bq = b.companion_interval();
+
+    // Cardinalities must always agree.
+    if (ap.size() != bp.size() ||
+        aq.size() != bq.size()) {
+        return false;
+    }
+
+    // Empty intervals have no canonical insertion point.
+    // Compare endpoints only for non-empty intervals.
+    if (!ap.empty() &&
+        (ap.l != bp.l || ap.r != bp.r)) {
+        return false;
+    }
+
+    if (!aq.empty() &&
+        (aq.l != bq.l || aq.r != bq.r)) {
+        return false;
+    }
+
+    return true;
 }
 
 /*
@@ -144,9 +167,21 @@ void check_rc_symmetry(const BwaFMDIndex& idx,const std::string& F,
     check_range(idx,r,p,ep,er,"search(P)");
     check_range(idx,rr,q,er,ep,"search(RC(P))");
 
-    auto a=r.primary_interval(), b=r.companion_interval();
-    auto c=rr.primary_interval(), d=rr.companion_interval();
-    if(a.l!=d.l||a.r!=d.r||b.l!=c.l||b.r!=c.r)
+    const auto a = r.primary_interval();
+    const auto b = r.companion_interval();
+    const auto c = rr.primary_interval();
+    const auto d = rr.companion_interval();
+
+    const auto same_interval = [](const Interval& x,
+                                  const Interval& y) {
+        if (x.size() != y.size())
+            return false;
+
+        // Empty intervals have no canonical insertion point.
+        return x.empty() || (x.l == y.l && x.r == y.r);
+    };
+
+    if (!same_interval(a, d) || !same_interval(b, c))
         fail("RC interval symmetry, pattern="+p+
              "\n primary(P)="+iv(a)+" companion(P)="+iv(b)+
              "\n primary(RC)="+iv(c)+" companion(RC)="+iv(d));
@@ -177,8 +212,8 @@ void check_singleton(const BwaFMDIndex& idx,const std::string& F,
         std::string rp=p+std::string(1,base(c));
         auto el=occurrences(F,lp), er=occurrences(F,rp);
         SA_Range fl,fr;
-        bool lok=idx.extend_left_singleton(r,c,fl);
-        bool rok=idx.extend_right_singleton(r,c,fr);
+        bool lok=idx.extend_left_bidirectional_singleton(r,c,fl);
+        bool rok=idx.extend_right_bidirectional_singleton(r,c,fr);
 
         if(lok!=(el.size()==1))
             fail("left singleton availability, "+lp);
@@ -290,9 +325,9 @@ void test_pattern(const BwaFMDIndex& idx,const std::string& R,
     if(!sl.empty() && sl.position()!=p.size()-1)
         fail("left single exact-search position metadata differs, "+p);
 
-    const auto right_seed=search_exact_bidirectional_seed(
+    const auto right_seed=search_exact_bidirectional(
         idx,p,Direction::Right);
-    const auto left_seed=search_exact_bidirectional_seed(
+    const auto left_seed=search_exact_bidirectional(
         idx,p,Direction::Left);
     if(!right_seed.is_bidirectional() || right_seed.size()!=a.size() ||
        !left_seed.is_bidirectional() || left_seed.size()!=b.size())
