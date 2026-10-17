@@ -116,6 +116,7 @@ public:
 
     bool is_single() const noexcept;
     bool is_bidirectional() const noexcept;
+    static SA_Range search_exact( const BwaFMDIndex& index, const std::string& read, Direction direction, Mode mode);
     Orientation orientation() const noexcept;
 
     Interval interval() const;

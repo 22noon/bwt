@@ -19,6 +19,7 @@ uint8_t base_code(char c)
     }
 }
 
+
 SA_Range empty_bidirectional_range(
     const BwaFMDIndex& index,
     uint32_t position)
@@ -231,90 +232,113 @@ SA_Range extend_paired_one(
 
 } // namespace
 
+namespace {
+
+SA_Range search_exact_impl(
+    const BwaFMDIndex& index,
+    const std::string& read,
+    Direction direction,
+    bool bidirectional,
+    const char* empty_message)
+{
+    if (read.empty())
+        throw std::invalid_argument(empty_message);
+
+    const bool scan_right = direction == Direction::Right;
+
+    const auto orientation = scan_right
+        ? SA_Range::Orientation::Right
+        : SA_Range::Orientation::Left;
+
+    const size_t first = scan_right ? 0 : read.size() - 1;
+    const uint8_t first_base = base_code(read[first]);
+
+    SA_Range range = bidirectional
+        ? index.initial_range(first_base)
+        : index.initial_single_range(first_base, orientation);
+
+    range.set_position(0);
+    range.set_valid(!range.empty());
+    range.set_unidirectional(true);
+
+    for (size_t consumed = 1;
+         consumed < read.size() && !range.empty();
+         ++consumed) {
+
+        const size_t pos = scan_right
+            ? consumed
+            : read.size() - consumed - 1;
+
+        const uint8_t c = base_code(read[pos]);
+
+        if (bidirectional) {
+            // Preserve the paired singleton fast path.
+            // Do not enable seeded single-path detection here.
+            range = extend_paired_one(
+                index, range, c, direction, false);
+        } else {
+            range = direction == Direction::Right
+                ? index.extend_right(range, c)
+                : index.extend_left(range, c);
+        }
+
+        range.set_position(
+            static_cast<uint32_t>(consumed));
+        range.set_valid(!range.empty());
+        range.set_unidirectional(true);
+    }
+
+    return range;
+}
+
+} // namespace
+
+
+SA_Range SA_Range::search_exact(
+    const BwaFMDIndex& index,
+    const std::string& read,
+    Direction direction,
+    Mode mode)
+{
+    switch (mode) {
+    case Mode::Single:
+        return search_exact_impl(
+            index,
+            read,
+            direction,
+            false,
+            "SA_Range::search_exact: read must not be empty");
+
+    case Mode::Bidirectional:
+        return search_exact_impl(
+            index,
+            read,
+            direction,
+            true,
+            "SA_Range::search_exact: read must not be empty");
+    }
+
+    throw std::invalid_argument(
+        "SA_Range::search_exact: invalid interval mode");
+}
 
 SA_Range search_exact_unidirectional(
     const BwaFMDIndex& index,
     const std::string& read,
     Direction direction)
 {
-    if (read.empty())
-        throw std::invalid_argument(
-            "search_exact_unidirectional: read must not be empty");
-
-    const bool scan_right = direction == Direction::Right;
-    const auto orientation = scan_right
-        ? SA_Range::Orientation::Right
-        : SA_Range::Orientation::Left;
-
-    const size_t first = scan_right ? 0 : read.size() - 1;
-
-    SA_Range range = index.initial_single_range(
-        base_code(read[first]), orientation);
-
-    range.set_position(0);
-    range.set_valid(!range.empty());
-    range.set_unidirectional(true);
-
-    for (size_t consumed = 1;
-         consumed < read.size() && !range.empty();
-         ++consumed) {
-        const size_t pos = scan_right
-            ? consumed
-            : read.size() - consumed - 1;
-
-        range = direction == Direction::Right
-            ? index.extend_right(range, base_code(read[pos]))
-            : index.extend_left(range, base_code(read[pos]));
-
-        range.set_position(static_cast<uint32_t>(consumed));
-        range.set_valid(!range.empty());
-        range.set_unidirectional(true);
-    }
-
-    return range;
+    return SA_Range::search_exact(
+        index, read, direction, SA_Range::Mode::Single);
 }
-
 
 SA_Range search_exact_bidirectional(
     const BwaFMDIndex& index,
     const std::string& read,
     Direction direction)
 {
-    if (read.empty())
-        throw std::invalid_argument(
-            "search_exact_bidirectional: read must not be empty");
-
-    const bool scan_right = direction == Direction::Right;
-    const size_t first = scan_right ? 0 : read.size() - 1;
-
-    SA_Range range = index.initial_range(base_code(read[first]));
-
-    range.set_position(0);
-    range.set_valid(!range.empty());
-    range.set_unidirectional(true);
-
-    for (size_t consumed = 1;
-         consumed < read.size() && !range.empty();
-         ++consumed) {
-        const size_t pos = scan_right
-            ? consumed
-            : read.size() - consumed - 1;
-
-        range = extend_paired_one(
-            index,
-            range,
-            base_code(read[pos]),
-            direction,
-            false); // Pure exact search: singleton fast path only.
-
-        range.set_position(static_cast<uint32_t>(consumed));
-        range.set_valid(!range.empty());
-        range.set_unidirectional(true);
-    }
-
-    return range;
+    return SA_Range::search_exact(
+        index, read, direction, SA_Range::Mode::Bidirectional);
 }
-
 
 SA_Range extend_exact_unidirectional(
     const BwaFMDIndex& index,
