@@ -89,11 +89,66 @@ if(BUILD_BENCHMARKS)
 endif()
 
 enable_testing()
+
+# The test programs need real BWA indexes (including sampled SA and, for
+# locate(), reference metadata). Generate deterministic fixtures in the build
+# tree rather than relying on generated files or absolute paths in the source
+# checkout. The repository carries the BWA API sources, but not the `bwa`
+# index-building executable.
+find_program(BWA_INDEX_EXECUTABLE NAMES bwa)
+if(NOT BWA_INDEX_EXECUTABLE)
+    message(FATAL_ERROR
+        "CTest fixtures require the BWA executable (bwa index) on PATH")
+endif()
+
+set(TEST_FIXTURE_ROOT "${CMAKE_CURRENT_BINARY_DIR}/test-fixtures")
+set(EXACT_FIXTURE_DIR "${TEST_FIXTURE_ROOT}/exact")
+set(LOCATE_FIXTURE_DIR "${TEST_FIXTURE_ROOT}/locate")
+file(MAKE_DIRECTORY "${EXACT_FIXTURE_DIR}" "${LOCATE_FIXTURE_DIR}")
+
+set(EXACT_FIXTURE_FASTA "${EXACT_FIXTURE_DIR}/reference.fa")
+set(EXACT_FIXTURE_PREFIX "${EXACT_FIXTURE_DIR}/test")
+file(WRITE "${EXACT_FIXTURE_FASTA}" ">test\nACGTTGCAACG\n")
+execute_process(
+    COMMAND "${BWA_INDEX_EXECUTABLE}" index
+            -p "${EXACT_FIXTURE_PREFIX}" "${EXACT_FIXTURE_FASTA}"
+    RESULT_VARIABLE EXACT_INDEX_RESULT
+    OUTPUT_VARIABLE EXACT_INDEX_OUTPUT
+    ERROR_VARIABLE EXACT_INDEX_ERROR
+)
+if(NOT EXACT_INDEX_RESULT EQUAL 0 OR
+   NOT EXISTS "${EXACT_FIXTURE_PREFIX}.bwt" OR
+   NOT EXISTS "${EXACT_FIXTURE_PREFIX}.sa")
+    message(FATAL_ERROR
+        "Failed to generate exact-search BWA test index with ${BWA_INDEX_EXECUTABLE}:\n${EXACT_INDEX_OUTPUT}${EXACT_INDEX_ERROR}")
+endif()
+
+set(LOCATE_FIXTURE_FASTA "${LOCATE_FIXTURE_DIR}/reference.fa")
+set(LOCATE_FIXTURE_PREFIX "${LOCATE_FIXTURE_DIR}/test")
+file(WRITE "${LOCATE_FIXTURE_FASTA}"
+    ">ref1\nACGTTGCAACG\n>ref2\nTTACCGGTAA\n")
+execute_process(
+    COMMAND "${BWA_INDEX_EXECUTABLE}" index
+            -p "${LOCATE_FIXTURE_PREFIX}" "${LOCATE_FIXTURE_FASTA}"
+    RESULT_VARIABLE LOCATE_INDEX_RESULT
+    OUTPUT_VARIABLE LOCATE_INDEX_OUTPUT
+    ERROR_VARIABLE LOCATE_INDEX_ERROR
+)
+if(NOT LOCATE_INDEX_RESULT EQUAL 0 OR
+   NOT EXISTS "${LOCATE_FIXTURE_PREFIX}.bwt" OR
+   NOT EXISTS "${LOCATE_FIXTURE_PREFIX}.sa" OR
+   NOT EXISTS "${LOCATE_FIXTURE_PREFIX}.ann" OR
+   NOT EXISTS "${LOCATE_FIXTURE_PREFIX}.amb" OR
+   NOT EXISTS "${LOCATE_FIXTURE_PREFIX}.pac")
+    message(FATAL_ERROR
+        "Failed to generate locate BWA test index with ${BWA_INDEX_EXECUTABLE}:\n${LOCATE_INDEX_OUTPUT}${LOCATE_INDEX_ERROR}")
+endif()
+
 add_test(NAME test_sa_range COMMAND test_sa_range)
-add_test(NAME test_extend_diagnostics COMMAND test_bwa_extend_diagnostic /home/chandana.tennakoon@pirbright.ac.uk/git/batmis/minimal_bwt/index/test.fa.bwt)
-add_test(NAME test_exact_search COMMAND test_exact_search /home/chandana.tennakoon@pirbright.ac.uk/git/batmis/minimal_bwt/tests/tmp_exact_search/test.bwt /home/chandana.tennakoon@pirbright.ac.uk/git/batmis/minimal_bwt/tests/tmp_exact_search/test.sa)
-add_test(NAME test_bwa_fmd_exhaustive COMMAND test_bwa_fmd_exhaustive /home/chandana.tennakoon@pirbright.ac.uk/git/batmis/minimal_bwt/tests/tmp_exact_search/test /home/chandana.tennakoon@pirbright.ac.uk/git/batmis/minimal_bwt/tests/tmp_exact_search/reference.fa)
-add_test(NAME test_bwa_branch COMMAND test_bwa_branch /home/chandana.tennakoon@pirbright.ac.uk/git/batmis/minimal_bwt/tests/tmp_exact_search/test.bwt /home/chandana.tennakoon@pirbright.ac.uk/git/batmis/minimal_bwt/tests/tmp_exact_search/test.sa)
-add_test(NAME test_bwa_locate COMMAND test_bwa_locate /home/chandana.tennakoon@pirbright.ac.uk/git/batmis/minimal_bwt/tests/tmp_locate/test)
-add_test(NAME test_mismatch_search COMMAND test_mismatch_search /home/chandana.tennakoon@pirbright.ac.uk/git/batmis/minimal_bwt/tests/tmp_exact_search/test.bwt /home/chandana.tennakoon@pirbright.ac.uk/git/batmis/minimal_bwt/tests/tmp_exact_search/test.sa)
-add_test(NAME test_fast_exact_search COMMAND test_fast_exact_search /home/chandana.tennakoon@pirbright.ac.uk/git/batmis/minimal_bwt/tests/tmp_exact_search/test.bwt /home/chandana.tennakoon@pirbright.ac.uk/git/batmis/minimal_bwt/tests/tmp_exact_search/test.sa)
+add_test(NAME test_extend_diagnostics COMMAND test_bwa_extend_diagnostic "${EXACT_FIXTURE_PREFIX}.bwt")
+add_test(NAME test_exact_search COMMAND test_exact_search "${EXACT_FIXTURE_PREFIX}.bwt" "${EXACT_FIXTURE_PREFIX}.sa")
+add_test(NAME test_bwa_fmd_exhaustive COMMAND test_bwa_fmd_exhaustive "${EXACT_FIXTURE_PREFIX}" "${EXACT_FIXTURE_FASTA}")
+add_test(NAME test_bwa_branch COMMAND test_bwa_branch "${EXACT_FIXTURE_PREFIX}.bwt" "${EXACT_FIXTURE_PREFIX}.sa")
+add_test(NAME test_bwa_locate COMMAND test_bwa_locate "${LOCATE_FIXTURE_PREFIX}")
+add_test(NAME test_mismatch_search COMMAND test_mismatch_search "${EXACT_FIXTURE_PREFIX}.bwt" "${EXACT_FIXTURE_PREFIX}.sa" "${EXACT_FIXTURE_FASTA}")
+add_test(NAME test_fast_exact_search COMMAND test_fast_exact_search "${EXACT_FIXTURE_PREFIX}.bwt" "${EXACT_FIXTURE_PREFIX}.sa")

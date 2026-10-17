@@ -116,12 +116,13 @@ void search_unidirectional(
                 : current.extend_right(expected_symbol);
 
             if (current.size() != exact.size()) {
-                /*
-                 * Defer branch discovery. Preserve the parent interval and
-                 * mark the expected base as forbidden for this position.
-                 * The next mismatch tier will branch from this state while
-                 * skipping the exact extension already followed here.
-                 */
+                // This is a conservative threshold deferral, not an assertion
+                // that another nucleotide child exists. Keep the parent
+                // paired range and metadata, and forbid only the expected
+                // base so a later pass can consider alternatives. The raw
+                // cardinality comparison is intentional existing behaviour:
+                // sentinel adjustment can make this state redundant, and
+                // such entries remain part of the Rejects contract.
                 SA_Range reject = current;
                 reject.set_forbidden_base(expected);
                 Rejects.push_back(std::move(reject));
@@ -158,6 +159,10 @@ void search_unidirectional(
             if (child.empty()) continue;
 
             if (child.mismatch_count() > static_cast<uint32_t>(Count)) {
+                // Unlike a threshold deferral above, this is the actual
+                // branch child that exceeded the mismatch budget. Preserve
+                // its child intervals and mismatch metadata as constructed;
+                // it is not a parent state with one base forbidden.
                 Rejects.push_back(std::move(child));
                 continue;
             }
