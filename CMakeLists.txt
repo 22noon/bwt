@@ -23,12 +23,9 @@ add_library(bwa_bwt STATIC
 
 target_include_directories(bwa_bwt PUBLIC ${BWA_API_DIR})
 
-add_library(fm_range
-    src/sa_range.cpp
-    src/bwa_fmd_index.cpp
-    src/mismatch_search.cpp
-    src/exact_search.cpp
-)
+#add_library(fm_range src/sa_range.cpp src/bwa_fmd_index.cpp src/mismatch_search.cpp src/exact_search.cpp)
+
+add_library(fm_range src/sa_range.cpp src/bwa_fmd_index.cpp src/mismatch_search.cpp src/exact_search.cpp src/mismatch_pipeline.cpp)
 
 target_include_directories(fm_range
     PUBLIC
@@ -37,6 +34,10 @@ target_include_directories(fm_range
 )
 
 target_link_libraries(fm_range PUBLIC bwa_bwt z)
+
+# Command-line runner for exact / one-mismatch searches.
+add_executable(fmsearch src/fmsearch.cpp)
+target_link_libraries(fmsearch PRIVATE fm_range)
 
 add_executable(test_sa_range
     tests/test_sa_range.cpp
@@ -72,6 +73,7 @@ add_executable(test_fast_exact_search
 add_executable(test_single_interval_branch
     tests/test_single_interval_branch.cpp
 )
+add_executable(test_mismatch_pipeline tests/test_mismatch_pipeline.cpp)
 target_link_libraries(test_single_interval_branch PRIVATE fm_range)
 target_link_libraries(test_sa_range PRIVATE fm_range)
 target_link_libraries(test_bwa_extend_diagnostic PRIVATE fm_range)
@@ -81,6 +83,7 @@ target_link_libraries(test_bwa_branch PRIVATE fm_range)
 target_link_libraries(test_bwa_locate PRIVATE fm_range pthread m)
 target_link_libraries(test_mismatch_search PRIVATE fm_range)
 target_link_libraries(test_fast_exact_search PRIVATE fm_range)
+target_link_libraries(test_mismatch_pipeline PRIVATE fm_range)
 
 if(BUILD_BENCHMARKS)
     add_executable(bench_exact_search
@@ -157,3 +160,4 @@ add_test(NAME test_bwa_locate COMMAND test_bwa_locate "${LOCATE_FIXTURE_PREFIX}"
 add_test(NAME test_mismatch_search COMMAND test_mismatch_search "${EXACT_FIXTURE_PREFIX}.bwt" "${EXACT_FIXTURE_PREFIX}.sa" "${EXACT_FIXTURE_FASTA}")
 add_test(NAME test_fast_exact_search COMMAND test_fast_exact_search "${EXACT_FIXTURE_PREFIX}.bwt" "${EXACT_FIXTURE_PREFIX}.sa")
 add_test( NAME test_single_interval_branch COMMAND test_single_interval_branch "${EXACT_FIXTURE_PREFIX}.bwt" "${EXACT_FIXTURE_PREFIX}.sa")
+add_test( NAME test_mismatch_pipeline COMMAND test_mismatch_pipeline "${EXACT_FIXTURE_PREFIX}.bwt" "${EXACT_FIXTURE_PREFIX}.sa")

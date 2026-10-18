@@ -1,4 +1,5 @@
 #include "bwa_fmd_index.hpp"
+#include "exact_search.hpp"
 
 #include <algorithm>
 #include <cassert>
@@ -190,6 +191,55 @@ int main(int argc, char** argv)
     assert(bns->l_pac == 21);
 
     BwaFMDIndex index(bwt, bns);
+
+    {
+        const std::string pattern = "ACG";
+
+        const auto paired = search_exact_bidirectional(
+            index, pattern, Direction::Right);
+
+        const auto left = search_exact_unidirectional(
+            index, pattern, Direction::Left);
+
+        const auto right = search_exact_unidirectional(
+            index, pattern, Direction::Right);
+
+        const auto paired_hits = index.locate(paired, pattern.size());
+        const auto left_hits = index.locate(left, pattern.size());
+        const auto right_hits = index.locate(right, pattern.size());
+
+        auto canonicalise = [](std::vector<LocatedHit> hits) {
+            std::sort(
+                hits.begin(), hits.end(),
+                [](const LocatedHit& a, const LocatedHit& b) {
+                    return std::tie(
+                        a.ref_id, a.position, a.strand
+                    ) < std::tie(
+                        b.ref_id, b.position, b.strand
+                    );
+                });
+            return hits;
+        };
+
+        const auto expected = canonicalise(paired_hits);
+
+        assert(canonicalise(left_hits).size() == expected.size());
+        assert(canonicalise(right_hits).size() == expected.size());
+
+        const auto left_sorted = canonicalise(left_hits);
+        const auto right_sorted = canonicalise(right_hits);
+
+        for (size_t i = 0; i < expected.size(); ++i) {
+            assert(left_sorted[i].ref_id == expected[i].ref_id);
+            assert(left_sorted[i].position == expected[i].position);
+            assert(left_sorted[i].strand == expected[i].strand);
+
+            assert(right_sorted[i].ref_id == expected[i].ref_id);
+            assert(right_sorted[i].position == expected[i].position);
+            assert(right_sorted[i].strand == expected[i].strand);
+        }
+    }
+
 
     /*
      * ------------------------------------------------------------

@@ -2,6 +2,8 @@
 
 #include <stdexcept>
 #include <vector>
+#include <limits>
+#include <utility>
 
 namespace {
 
@@ -595,24 +597,25 @@ bool BwaFMDIndex::extend_right_bidirectional_singleton(
 std::vector<uint64_t> BwaFMDIndex::locate(
     const SA_Range& range) const
 {
-    if (!range.is_bidirectional())
+    if (!range.is_single() && !range.is_bidirectional())
         throw std::logic_error(
-            "BwaFMDIndex::locate requires a bidirectional/FMD range");
+            "BwaFMDIndex::locate: unsupported range mode");
 
-    /*
-     * bwt_restore_sa() must have been called before locate().
-     */
+    if (range.index() != this)
+        throw std::invalid_argument(
+            "BwaFMDIndex::locate: range belongs to a different index");
+
     if (!bwt_->sa || bwt_->sa_intv <= 0)
         throw std::logic_error(
             "BwaFMDIndex::locate requires the BWA suffix array "
             "to be restored");
 
-    const auto p = range.primary_interval();
+    const Interval interval = range.is_single()
+        ? range.interval()
+        : range.primary_interval();
 
-    const bwtint_t l =
-        static_cast<bwtint_t>(p.l);
-    const bwtint_t r =
-        static_cast<bwtint_t>(p.r);
+    const bwtint_t l = static_cast<bwtint_t>(interval.l);
+    const bwtint_t r = static_cast<bwtint_t>(interval.r);
 
     std::vector<uint64_t> positions;
     positions.reserve(static_cast<size_t>(r - l));
@@ -624,6 +627,7 @@ std::vector<uint64_t> BwaFMDIndex::locate(
     return positions;
 }
 
+
 #include <limits>
 #include <utility>
 
@@ -631,9 +635,13 @@ std::vector<LocatedHit> BwaFMDIndex::locate(
     const SA_Range& range,
     uint64_t pattern_length) const
 {
-    if (!range.is_bidirectional())
+    if (!range.is_single() && !range.is_bidirectional())
         throw std::logic_error(
-            "locate requires a bidirectional/FMD range");
+            "locate: unsupported range mode");
+
+    if (range.index() != this)
+        throw std::invalid_argument(
+            "locate: range belongs to a different index");
 
     if (!bns_)
         throw std::logic_error(
@@ -652,10 +660,19 @@ std::vector<LocatedHit> BwaFMDIndex::locate(
         throw std::logic_error(
             "locate requires the BWA suffix array to be restored");
 
-    const auto p = range.primary_interval();
+    const Interval interval = range.is_single()
+        ? range.interval()
+        : range.primary_interval();
 
-    const bwtint_t l = static_cast<bwtint_t>(p.l);
-    const bwtint_t r = static_cast<bwtint_t>(p.r);
+    // A right-oriented single range stores RC(pattern), not pattern.
+    // Coordinates are located normally, but its reported strand must
+    // be flipped to describe the original query.
+    const bool flip_strand =
+        range.is_single() &&
+        range.orientation() == SA_Range::Orientation::Right;
+
+    const bwtint_t l = static_cast<bwtint_t>(interval.l);
+    const bwtint_t r = static_cast<bwtint_t>(interval.r);
 
     std::vector<LocatedHit> hits;
     hits.reserve(static_cast<size_t>(r - l));
@@ -665,23 +682,16 @@ std::vector<LocatedHit> BwaFMDIndex::locate(
             static_cast<int64_t>(bwt_sa(bwt_, k));
 
         int is_reverse = 0;
-
-        // Convert the indexed-text coordinate to the natural
-        // reference coordinate system.
         int64_t pos = bns_depos(bns_, pac, &is_reverse);
 
-        /*
-         * For reverse-strand hits, bns_depos() gives the
-         * mirrored endpoint. Subtract length - 1 to obtain
-         * the leftmost coordinate on the forward reference.
-         */
+        // For reverse-half hits, bns_depos() returns the mirrored
+        // endpoint. Convert it to the leftmost reference coordinate.
         if (is_reverse) {
             if (pattern_length - 1 >
                 static_cast<uint64_t>(pos))
                 continue;
 
-            pos -= static_cast<int64_t>(
-                pattern_length - 1);
+            pos -= static_cast<int64_t>(pattern_length - 1);
         }
 
         if (pos < 0 ||
@@ -689,7 +699,6 @@ std::vector<LocatedHit> BwaFMDIndex::locate(
                 static_cast<uint64_t>(bns_->l_pac))
             continue;
 
-        // Reject hits extending beyond the natural reference.
         if (pattern_length >
             static_cast<uint64_t>(bns_->l_pac - pos))
             continue;
@@ -697,12 +706,7 @@ std::vector<LocatedHit> BwaFMDIndex::locate(
         const int64_t end =
             pos + static_cast<int64_t>(pattern_length);
 
-        /*
-         * Resolve the complete hit interval. This rejects
-         * hits crossing adjacent reference sequences.
-         */
-        const int ref_id =
-            bns_intv2rid(bns_, pos, end);
+        const int ref_id = bns_intv2rid(bns_, pos, end);
 
         if (ref_id < 0 || ref_id >= bns_->n_seqs)
             continue;
@@ -713,12 +717,7 @@ std::vector<LocatedHit> BwaFMDIndex::locate(
         if (pos < ref.offset || end > ref_end)
             continue;
 
-        /*
-         * BWA replaces ambiguous bases in the packed reference.
-         * Reject apparent exact matches overlapping .amb intervals.
-         */
         int ambi_ref_id = -1;
-
         const int ambiguous = bns_cnt_ambi(
             bns_,
             pos,
@@ -733,7 +732,11 @@ std::vector<LocatedHit> BwaFMDIndex::locate(
         hit.ref_name = ref.name ? ref.name : "";
         hit.position =
             static_cast<uint64_t>(pos - ref.offset);
-        hit.strand = is_reverse
+
+        const bool reported_reverse =
+            static_cast<bool>(is_reverse) != flip_strand;
+
+        hit.strand = reported_reverse
             ? Strand::Reverse
             : Strand::Forward;
 
@@ -742,3 +745,4 @@ std::vector<LocatedHit> BwaFMDIndex::locate(
 
     return hits;
 }
+
