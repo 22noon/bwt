@@ -80,7 +80,7 @@ add_executable(test_single_interval_branch tests/test_single_interval_branch.cpp
 add_executable(test_mismatch_pipeline tests/test_mismatch_pipeline.cpp)
 add_executable(test_forward_only_search tests/test_forward_only_search.cpp)
 add_executable(write_forward_only_sa tests/write_forward_only_sa.cpp)
-foreach(t test_sa_range test_bwa_extend_diagnostic test_exact_search test_bwa_fmd_exhaustive test_bwa_branch test_bwa_locate test_mismatch_search test_fast_exact_search test_single_interval_branch test_mismatch_pipeline test_forward_only_search write_forward_only_sa)
+foreach(t test_sa_range test_bwa_extend_diagnostic test_bwa_fmd_exhaustive test_bwa_branch test_bwa_locate test_mismatch_search test_fast_exact_search test_single_interval_branch test_mismatch_pipeline write_forward_only_sa)
   target_link_libraries(${t} PRIVATE fm_range)
 endforeach()
 target_link_libraries(test_bwa_locate PRIVATE pthread m)
@@ -91,9 +91,35 @@ if(BUILD_BENCHMARKS)
 
 endif()
 
-# This option is separate from BUILD_BENCHMARKS because it builds three
-# isolated exact-search variants without changing any regular target.
+# This option is separate from BUILD_BENCHMARKS because it builds isolated
+# exact-search benchmark variants without changing any regular target.
 if(BUILD_SINGLETON_INLINE_BENCHMARKS)
+  # The run-loop variant is an isolated exact-search benchmark control. The
+  # regular fmsearch and fm_range targets keep the existing per-step path.
+  add_library(fm_range_singleton_run_loop STATIC ${FM_RANGE_SOURCES})
+  target_include_directories(fm_range_singleton_run_loop PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include ${BWA_API_DIR})
+  target_compile_definitions(fm_range_singleton_run_loop PRIVATE FM_BENCH_SINGLETON_RUN_LOOP)
+  target_compile_options(fm_range_singleton_run_loop PRIVATE -O3 -DNDEBUG)
+  target_link_libraries(fm_range_singleton_run_loop PUBLIC bwa_bwt_prod ZLIB::ZLIB)
+  add_executable(fmsearch_singleton_run_loop src/fmsearch.cpp src/sam_output.cpp)
+  target_include_directories(fmsearch_singleton_run_loop PRIVATE ${HTSLIB_INCLUDE_DIR})
+  target_link_libraries(fmsearch_singleton_run_loop PRIVATE
+    fm_range_singleton_run_loop ${HTSLIB_LINK_LIBRARIES})
+  target_compile_options(fmsearch_singleton_run_loop PRIVATE -O3 -DNDEBUG)
+
+  # This duplicate is used only by correctness tests to expose per-step state;
+  # the timed run-loop executable has no tracing branch in its inner loop.
+  add_library(fm_range_singleton_run_loop_trace STATIC ${FM_RANGE_SOURCES})
+  target_include_directories(fm_range_singleton_run_loop_trace PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include ${BWA_API_DIR})
+  target_compile_definitions(fm_range_singleton_run_loop_trace PRIVATE
+    FM_BENCH_SINGLETON_RUN_LOOP FM_BENCH_SINGLETON_RUN_LOOP_TRACE)
+  target_compile_options(fm_range_singleton_run_loop_trace PRIVATE -O3 -DNDEBUG)
+  target_link_libraries(fm_range_singleton_run_loop_trace PUBLIC bwa_bwt_prod ZLIB::ZLIB)
+  target_compile_definitions(test_forward_only_search PRIVATE
+    FM_BENCH_SINGLETON_RUN_LOOP_TRACE)
+  target_link_libraries(test_forward_only_search PRIVATE fm_range_singleton_run_loop_trace)
+  target_link_libraries(test_exact_search PRIVATE fm_range_singleton_run_loop)
+
   # Preserve the pre-optimization A control after production adopts the
   # singleton path. It differs only by compiling the generic dispatch branch.
   add_library(fm_range_singleton_baseline STATIC ${FM_RANGE_SOURCES})
@@ -146,6 +172,9 @@ if(BUILD_SINGLETON_INLINE_BENCHMARKS)
     target_link_options(bench_singleton_inline_audit_c PRIVATE -Wl,--wrap=bwt_occ)
     target_link_libraries(bench_singleton_inline_audit_c PRIVATE fm_range_singleton_alwaysinline)
   endif()
+else()
+  target_link_libraries(test_forward_only_search PRIVATE fm_range)
+  target_link_libraries(test_exact_search PRIVATE fm_range)
 endif()
 
 enable_testing()
@@ -181,8 +210,17 @@ add_test(NAME test_mismatch_search COMMAND test_mismatch_search "${EXACT_FIXTURE
 add_test(NAME test_fast_exact_search COMMAND test_fast_exact_search "${EXACT_FIXTURE_PREFIX}.bwt" "${EXACT_FIXTURE_PREFIX}.sa")
 add_test(NAME test_single_interval_branch COMMAND test_single_interval_branch "${EXACT_FIXTURE_PREFIX}.bwt" "${EXACT_FIXTURE_PREFIX}.sa")
 add_test(NAME test_mismatch_pipeline COMMAND test_mismatch_pipeline "${EXACT_FIXTURE_PREFIX}.bwt" "${EXACT_FIXTURE_PREFIX}.sa")
-add_test(NAME test_fmsearch_forward_sam
-  COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_fmsearch_forward_sam.sh"
-    "$<TARGET_FILE:fmsearch>" "$<TARGET_FILE:write_forward_only_sa>"
-    "${BWA_INDEX_EXECUTABLE}" "${TEST_FIXTURE_ROOT}/forward-sam"
-    "$<TARGET_FILE:test_forward_only_search>")
+if(BUILD_SINGLETON_INLINE_BENCHMARKS)
+  add_test(NAME test_fmsearch_forward_sam
+    COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_fmsearch_forward_sam.sh"
+      "$<TARGET_FILE:fmsearch>" "$<TARGET_FILE:write_forward_only_sa>"
+      "${BWA_INDEX_EXECUTABLE}" "${TEST_FIXTURE_ROOT}/forward-sam"
+      "$<TARGET_FILE:test_forward_only_search>"
+      "$<TARGET_FILE:fmsearch_singleton_run_loop>")
+else()
+  add_test(NAME test_fmsearch_forward_sam
+    COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_fmsearch_forward_sam.sh"
+      "$<TARGET_FILE:fmsearch>" "$<TARGET_FILE:write_forward_only_sa>"
+      "${BWA_INDEX_EXECUTABLE}" "${TEST_FIXTURE_ROOT}/forward-sam"
+      "$<TARGET_FILE:test_forward_only_search>")
+endif()

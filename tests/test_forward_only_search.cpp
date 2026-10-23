@@ -9,6 +9,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace {
 std::string read_reference(const std::string& path)
@@ -76,6 +77,16 @@ bool check(const BwaFMDIndex& index, const BwaFMDIndex& batmis_index,
 {
     const auto expected_positions = occurrence_positions(reference, query);
     const SA_Range range = search_exact_unidirectional(index, query, Direction::Left);
+#if defined(FM_BENCH_SINGLETON_RUN_LOOP_TRACE)
+    std::vector<SA_Range> run_loop_trace;
+    const SA_Range traced_range = bench_search_exact_unidirectional_trace(
+        index, query, Direction::Left, run_loop_trace);
+    if (!same_interval(range, traced_range)) {
+        std::cerr << "Run-loop traced result differs from normal run-loop search for "
+                  << query << '\n';
+        return false;
+    }
+#endif
     const SA_Range seeded_range = seeded.search(index, query);
     const SA_Range batmis_range = search_exact_unidirectional(
         batmis_index, query, Direction::Left);
@@ -114,10 +125,18 @@ bool check(const BwaFMDIndex& index, const BwaFMDIndex& batmis_index,
     SA_Range step_batmis_fast = batmis_fast_index.initial_single_range(
         query.back() == 'A' ? 0 : query.back() == 'C' ? 1 : query.back() == 'G' ? 2 : 3,
         SA_Range::Orientation::Left);
-    for (size_t pos = query.size() - 1; pos > 0; --pos) {
+    step_bwa.set_position(0);
+    step_bwa.set_valid(!step_bwa.empty());
+    step_bwa.set_unidirectional(true);
+    std::vector<SA_Range> generic_trace{step_bwa};
+    for (size_t pos = query.size() - 1; pos > 0 && !step_bwa.empty(); --pos) {
         const char base = query[pos - 1];
         const uint8_t c = base == 'A' ? 0 : base == 'C' ? 1 : base == 'G' ? 2 : 3;
         step_bwa = index.extend_left(step_bwa, c);
+        step_bwa.set_position(static_cast<uint32_t>(query.size() - pos));
+        step_bwa.set_valid(!step_bwa.empty());
+        step_bwa.set_unidirectional(true);
+        generic_trace.push_back(step_bwa);
         step_batmis = batmis_index.extend_left(step_batmis, c);
         step_batmis_fast = batmis_fast_index.extend_left(step_batmis_fast, c);
         if (!same_interval(step_bwa, step_batmis)) {
@@ -131,6 +150,32 @@ bool check(const BwaFMDIndex& index, const BwaFMDIndex& batmis_index,
             return false;
         }
     }
+#if defined(FM_BENCH_SINGLETON_RUN_LOOP_TRACE)
+    if (run_loop_trace.size() != generic_trace.size()) {
+        std::cerr << "Run-loop/generic step-count mismatch for " << query
+                  << ": run-loop " << run_loop_trace.size()
+                  << ", generic " << generic_trace.size() << '\n';
+        return false;
+    }
+    for (size_t step = 0; step < generic_trace.size(); ++step) {
+        const SA_Range& actual = run_loop_trace[step];
+        const SA_Range& expected_step = generic_trace[step];
+        if (!same_interval(actual, expected_step) ||
+            actual.index() != expected_step.index() ||
+            actual.is_single() != expected_step.is_single() ||
+            actual.orientation() != expected_step.orientation() ||
+            actual.position() != expected_step.position() ||
+            actual.valid() != expected_step.valid() ||
+            actual.is_unidirectional() != expected_step.is_unidirectional()) {
+            std::cerr << "Run-loop/generic state mismatch for " << query
+                      << " at extension step " << step << ": run-loop ["
+                      << actual.interval().l << ',' << actual.interval().r
+                      << "), generic [" << expected_step.interval().l << ','
+                      << expected_step.interval().r << ")\n";
+            return false;
+        }
+    }
+#endif
     if (!same_interval(range, step_bwa)) {
         std::cerr << "Production exact-search interval differs from generic "
                   << "extend_left() baseline for query " << query

@@ -3,12 +3,24 @@
 #include "bwa_fmd_index.hpp"
 #include <array>
 #include <string>
+#if defined(FM_BENCH_SINGLETON_RUN_LOOP_TRACE)
+#include <vector>
+#endif
 
 // Pure exact search returning one SA interval.
 SA_Range search_exact_unidirectional(
     const BwaFMDIndex& index,
     const std::string& read,
     Direction direction);
+
+#if defined(FM_BENCH_SINGLETON_RUN_LOOP_TRACE)
+// Test-only trace from the dedicated singleton-run benchmark variant.
+SA_Range bench_search_exact_unidirectional_trace(
+    const BwaFMDIndex& index,
+    const std::string& read,
+    Direction direction,
+    std::vector<SA_Range>& trace);
+#endif
 
 #if defined(FM_BENCH_SINGLETON_NOINLINE) || defined(FM_BENCH_SINGLETON_ALWAYS_INLINE)
 // Exposed only by opt-in benchmark builds for step-by-step differential checks.

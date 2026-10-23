@@ -6,6 +6,7 @@ make_sa=$2
 bwa=$3
 work=$4
 test_search=$5
+run_loop_fmsearch=${6:-}
 rm -rf "$work"
 mkdir -p "$work"
 prefix="$work/ref.forward"
@@ -125,6 +126,17 @@ awk -F '\t' '
             !boundary[25] || unique_count != 1 || orientation_count != 1 || unmapped_count != 1) exit 15
     }
 ' "$work/out.sam"
+
+if [[ -n "$run_loop_fmsearch" ]]; then
+  "$run_loop_fmsearch" -i "$work/no_sa" -q "$work/reads.fq" -n 0 \
+    --no-progress --timing >"$work/run-loop-search.stdout" 2>"$work/run-loop-search.stderr"
+  grep -F 'fmsearch: exact hits=8 located=0' "$work/run-loop-search.stderr" >/dev/null
+  "$run_loop_fmsearch" -i "$prefix" -q "$work/reads.fq" -n 0 \
+    --sam-output --timing --no-progress -o "$work/run-loop.sam" \
+    >"$work/run-loop-sam.stdout" 2>"$work/run-loop-sam.stderr"
+  grep -F 'fmsearch: exact hits=8 located=8' "$work/run-loop-sam.stderr" >/dev/null
+  cmp "$work/out.sam" "$work/run-loop.sam"
+fi
 
 if "$fmsearch" -i "$prefix" -q "$work/reads.fq" -n 0 --sam-output --no-progress \
     -o "$work/missing/out.sam" >"$work/bad.out" 2>"$work/bad.err"; then
