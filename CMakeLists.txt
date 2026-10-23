@@ -4,6 +4,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 option(BUILD_BENCHMARKS "Build standalone benchmark executables" OFF)
+option(BUILD_SINGLETON_INLINE_BENCHMARKS "Build isolated exact-search singleton inlining benchmarks" OFF)
 set(BWA_API_DIR "${CMAKE_CURRENT_SOURCE_DIR}/API" CACHE PATH "BWA API source directory")
 set(HTSLIB_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/external/htslib-1.24" CACHE PATH "HTSlib source/install prefix")
 if(NOT EXISTS "${BWA_API_DIR}/bwt.h")
@@ -26,7 +27,7 @@ if(TARGET PkgConfig::HTSLIB_PC)
 endif()
 
 set(BWA_C_SOURCES ${BWA_API_DIR}/bwt.c ${BWA_API_DIR}/bntseq.c ${BWA_API_DIR}/utils.c)
-set(FM_RANGE_SOURCES src/sa_range.cpp src/bwa_fmd_index.cpp src/mismatch_search.cpp src/exact_search.cpp src/mismatch_pipeline.cpp)
+set(FM_RANGE_SOURCES src/sa_range.cpp src/batmis_rank_backend.cpp src/bwa_fmd_index.cpp src/mismatch_search.cpp src/exact_search.cpp src/mismatch_pipeline.cpp)
 
 # Default library remains the one used by tests.
 add_library(bwa_bwt STATIC ${BWA_C_SOURCES})
@@ -77,7 +78,9 @@ add_executable(test_mismatch_search tests/test_mismatch_search.cpp)
 add_executable(test_fast_exact_search tests/test_fast_exact_search.cpp)
 add_executable(test_single_interval_branch tests/test_single_interval_branch.cpp)
 add_executable(test_mismatch_pipeline tests/test_mismatch_pipeline.cpp)
-foreach(t test_sa_range test_bwa_extend_diagnostic test_exact_search test_bwa_fmd_exhaustive test_bwa_branch test_bwa_locate test_mismatch_search test_fast_exact_search test_single_interval_branch test_mismatch_pipeline)
+add_executable(test_forward_only_search tests/test_forward_only_search.cpp)
+add_executable(write_forward_only_sa tests/write_forward_only_sa.cpp)
+foreach(t test_sa_range test_bwa_extend_diagnostic test_exact_search test_bwa_fmd_exhaustive test_bwa_branch test_bwa_locate test_mismatch_search test_fast_exact_search test_single_interval_branch test_mismatch_pipeline test_forward_only_search write_forward_only_sa)
   target_link_libraries(${t} PRIVATE fm_range)
 endforeach()
 target_link_libraries(test_bwa_locate PRIVATE pthread m)
@@ -85,6 +88,64 @@ if(BUILD_BENCHMARKS)
   add_executable(bench_exact_search benchmarks/bench_exact_search.cpp)
   target_link_libraries(bench_exact_search PRIVATE fm_range)
   target_compile_definitions(bench_exact_search PRIVATE BENCH_BUILD_TYPE="${CMAKE_BUILD_TYPE}")
+
+endif()
+
+# This option is separate from BUILD_BENCHMARKS because it builds three
+# isolated exact-search variants without changing any regular target.
+if(BUILD_SINGLETON_INLINE_BENCHMARKS)
+  # Preserve the pre-optimization A control after production adopts the
+  # singleton path. It differs only by compiling the generic dispatch branch.
+  add_library(fm_range_singleton_baseline STATIC ${FM_RANGE_SOURCES})
+  target_include_directories(fm_range_singleton_baseline PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include ${BWA_API_DIR})
+  target_compile_definitions(fm_range_singleton_baseline PRIVATE FM_BENCH_SINGLETON_BASELINE)
+  target_compile_options(fm_range_singleton_baseline PRIVATE -O3 -DNDEBUG)
+  target_link_libraries(fm_range_singleton_baseline PUBLIC bwa_bwt_prod ZLIB::ZLIB)
+
+  add_executable(bench_singleton_inline_a benchmark/bench_singleton_inline.cpp)
+  target_compile_definitions(bench_singleton_inline_a PRIVATE BENCH_VARIANT_NAME="A-baseline")
+  target_link_libraries(bench_singleton_inline_a PRIVATE fm_range_singleton_baseline)
+
+  add_library(fm_range_singleton_noinline STATIC ${FM_RANGE_SOURCES})
+  target_include_directories(fm_range_singleton_noinline PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include ${BWA_API_DIR})
+  target_compile_definitions(fm_range_singleton_noinline PRIVATE FM_BENCH_SINGLETON_NOINLINE)
+  target_compile_options(fm_range_singleton_noinline PRIVATE -O3 -DNDEBUG)
+  target_link_libraries(fm_range_singleton_noinline PUBLIC bwa_bwt_prod ZLIB::ZLIB)
+  add_executable(bench_singleton_inline_b benchmark/bench_singleton_inline.cpp)
+  target_compile_definitions(bench_singleton_inline_b PRIVATE FM_BENCH_SINGLETON_NOINLINE BENCH_VARIANT_NAME="B-noinline")
+  target_link_libraries(bench_singleton_inline_b PRIVATE fm_range_singleton_noinline)
+
+  add_library(fm_range_singleton_alwaysinline STATIC ${FM_RANGE_SOURCES})
+  target_include_directories(fm_range_singleton_alwaysinline PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include ${BWA_API_DIR})
+  target_compile_definitions(fm_range_singleton_alwaysinline PRIVATE FM_BENCH_SINGLETON_ALWAYS_INLINE)
+  target_compile_options(fm_range_singleton_alwaysinline PRIVATE -O3 -DNDEBUG)
+  target_link_libraries(fm_range_singleton_alwaysinline PUBLIC bwa_bwt_prod ZLIB::ZLIB)
+  add_executable(bench_singleton_inline_c benchmark/bench_singleton_inline.cpp)
+  target_compile_definitions(bench_singleton_inline_c PRIVATE FM_BENCH_SINGLETON_ALWAYS_INLINE BENCH_VARIANT_NAME="C-always-inline")
+  target_link_libraries(bench_singleton_inline_c PRIVATE fm_range_singleton_alwaysinline)
+
+  add_executable(fmsearch_singleton_noinline src/fmsearch.cpp src/sam_output.cpp)
+  target_include_directories(fmsearch_singleton_noinline PRIVATE ${HTSLIB_INCLUDE_DIR})
+  target_link_libraries(fmsearch_singleton_noinline PRIVATE fm_range_singleton_noinline ${HTSLIB_LINK_LIBRARIES})
+  target_compile_options(fmsearch_singleton_noinline PRIVATE -O3 -DNDEBUG)
+  add_executable(fmsearch_singleton_alwaysinline src/fmsearch.cpp src/sam_output.cpp)
+  target_include_directories(fmsearch_singleton_alwaysinline PRIVATE ${HTSLIB_INCLUDE_DIR})
+  target_link_libraries(fmsearch_singleton_alwaysinline PRIVATE fm_range_singleton_alwaysinline ${HTSLIB_LINK_LIBRARIES})
+  target_compile_options(fmsearch_singleton_alwaysinline PRIVATE -O3 -DNDEBUG)
+
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    add_executable(bench_singleton_inline_audit_b benchmark/bench_singleton_inline.cpp)
+    target_compile_definitions(bench_singleton_inline_audit_b PRIVATE
+      FM_BENCH_SINGLETON_NOINLINE FM_BENCH_RANK_AUDIT BENCH_VARIANT_NAME="B-noinline-audit")
+    target_link_options(bench_singleton_inline_audit_b PRIVATE -Wl,--wrap=bwt_occ)
+    target_link_libraries(bench_singleton_inline_audit_b PRIVATE fm_range_singleton_noinline)
+
+    add_executable(bench_singleton_inline_audit_c benchmark/bench_singleton_inline.cpp)
+    target_compile_definitions(bench_singleton_inline_audit_c PRIVATE
+      FM_BENCH_SINGLETON_ALWAYS_INLINE FM_BENCH_RANK_AUDIT BENCH_VARIANT_NAME="C-always-inline-audit")
+    target_link_options(bench_singleton_inline_audit_c PRIVATE -Wl,--wrap=bwt_occ)
+    target_link_libraries(bench_singleton_inline_audit_c PRIVATE fm_range_singleton_alwaysinline)
+  endif()
 endif()
 
 enable_testing()
@@ -120,3 +181,8 @@ add_test(NAME test_mismatch_search COMMAND test_mismatch_search "${EXACT_FIXTURE
 add_test(NAME test_fast_exact_search COMMAND test_fast_exact_search "${EXACT_FIXTURE_PREFIX}.bwt" "${EXACT_FIXTURE_PREFIX}.sa")
 add_test(NAME test_single_interval_branch COMMAND test_single_interval_branch "${EXACT_FIXTURE_PREFIX}.bwt" "${EXACT_FIXTURE_PREFIX}.sa")
 add_test(NAME test_mismatch_pipeline COMMAND test_mismatch_pipeline "${EXACT_FIXTURE_PREFIX}.bwt" "${EXACT_FIXTURE_PREFIX}.sa")
+add_test(NAME test_fmsearch_forward_sam
+  COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_fmsearch_forward_sam.sh"
+    "$<TARGET_FILE:fmsearch>" "$<TARGET_FILE:write_forward_only_sa>"
+    "${BWA_INDEX_EXECUTABLE}" "${TEST_FIXTURE_ROOT}/forward-sam"
+    "$<TARGET_FILE:test_forward_only_search>")

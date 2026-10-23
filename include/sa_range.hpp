@@ -35,6 +35,8 @@ struct Interval {
     uint64_t r = 0;  // half-open [l,r)
 
     uint64_t size() const noexcept { return r - l; }
+    // Empty intervals have no canonical insertion point; consumers must
+    // test empty()/size() rather than depend on particular empty bounds.
     bool empty() const noexcept { return l == r; }
 };
 

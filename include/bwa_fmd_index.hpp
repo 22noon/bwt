@@ -6,25 +6,38 @@ extern "C" {
 }
 
 #include "sa_range.hpp"
+#include "batmis_rank_backend.hpp"
 #include "sa_branches.hpp"
 #include <vector>
 #include <cstdint>
 #include <string>
 #include <stdexcept>
+#include <memory>
+
+enum class RankBackend { Bwa, BatMIS };
 
 class BwaFMDIndex {
 public:
-    explicit BwaFMDIndex(const bwt_t* bwt)
-        : bwt_(bwt)
+    explicit BwaFMDIndex(
+        const bwt_t* bwt,
+        RankBackend backend = RankBackend::Bwa,
+        bool batmis_singleton_fast_path = false)
+        : bwt_(bwt), backend_kind_(backend),
+          batmis_singleton_fast_path_(batmis_singleton_fast_path)
     {
         if (!bwt_)
             throw std::invalid_argument("BwaFMDIndex: null bwt_t");
+        if (backend_kind_ == RankBackend::BatMIS)
+            bat_rank_ = std::make_shared<BatMisRankBackend>(bwt_);
     }
 
     BwaFMDIndex(
         const bwt_t* bwt,
-        const bntseq_t* reference)
-        : bwt_(bwt), bns_(reference)
+        const bntseq_t* reference,
+        RankBackend backend = RankBackend::Bwa,
+        bool batmis_singleton_fast_path = false)
+        : bwt_(bwt), bns_(reference), backend_kind_(backend),
+          batmis_singleton_fast_path_(batmis_singleton_fast_path)
     {
         if (!bwt_)
             throw std::invalid_argument(
@@ -33,6 +46,8 @@ public:
         if (!bns_)
             throw std::invalid_argument(
                 "BwaFMDIndex: null reference metadata");
+        if (backend_kind_ == RankBackend::BatMIS)
+            bat_rank_ = std::make_shared<BatMisRankBackend>(bwt_);
     }
 
     /*
@@ -93,6 +108,7 @@ public:
      * Direct access for integration with the existing BWA API.
      */
     const bwt_t* bwt() const noexcept { return bwt_; }
+    RankBackend rank_backend() const noexcept { return backend_kind_; }
     const bntseq_t* reference_metadata() const noexcept { return bns_; }
 
     bool extend_left_bidirectional_singleton(
@@ -112,6 +128,11 @@ public:
     std::vector<uint64_t> locate(
         const SA_Range& range) const;
 
+    // Return forward-text coordinates for rows in a forward-only BWT.
+    // The sentinel suffix (coordinate seq_len) is omitted; duplicates are kept.
+    std::vector<uint64_t> locate_forward(
+        const SA_Range& range) const;
+
     std::vector<LocatedHit> locate(
         const SA_Range& range,
         uint64_t pattern_length) const;
@@ -119,6 +140,9 @@ public:
 private:
     const bwt_t* bwt_ = nullptr;
     const bntseq_t* bns_ = nullptr;
+    RankBackend backend_kind_ = RankBackend::Bwa;
+    bool batmis_singleton_fast_path_ = false;
+    std::shared_ptr<const BatMisRankBackend> bat_rank_;
 
     SA_Range extend_single_interval_one(
         const SA_Range& range,

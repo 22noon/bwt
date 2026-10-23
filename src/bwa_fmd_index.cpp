@@ -173,6 +173,35 @@ SA_Range BwaFMDIndex::extend_single_interval_one(
 
     const Interval interval = range.interval();
 
+    // The experimental backend uses BatMIS-style exclusive-prefix ranks
+    // over an in-memory BatMIS layout constructed from this BWA BWT.
+    // BWA's native path below remains unchanged when it is selected.
+    if (bat_rank_) {
+        const bwtint_t start = bwt_->L2[bwt_c] + 1 +
+            bat_rank_->occ(interval.l, bwt_c);
+        if (batmis_singleton_fast_path_ && interval.size() == 1) {
+            uint8_t row_symbol = 0;
+            const bool has_symbol = bat_rank_->symbol_at(interval.l, row_symbol);
+            const bool matches = has_symbol && row_symbol == bwt_c;
+            const bwtint_t end = matches ? start + 1 : start;
+            return SA_Range::single(
+                this,
+                Interval{static_cast<uint64_t>(start),
+                         static_cast<uint64_t>(end)},
+                range.orientation());
+        }
+        const bwtint_t end = bwt_->L2[bwt_c] + 1 +
+            bat_rank_->occ(interval.r, bwt_c);
+        if (end < start)
+            return SA_Range::single(
+                this, Interval{0, 0}, range.orientation());
+        return SA_Range::single(
+            this,
+            Interval{static_cast<uint64_t>(start),
+                     static_cast<uint64_t>(end)},
+            range.orientation());
+    }
+
     /*
      * Fast path for a singleton SA interval.
      *
@@ -624,6 +653,30 @@ std::vector<uint64_t> BwaFMDIndex::locate(
         positions.push_back(
             static_cast<uint64_t>(bwt_sa(bwt_, k)));
 
+    return positions;
+}
+
+std::vector<uint64_t> BwaFMDIndex::locate_forward(
+    const SA_Range& range) const
+{
+    if (!range.is_single() && !range.is_bidirectional())
+        throw std::logic_error("locate_forward: unsupported range mode");
+    if (range.index() != this)
+        throw std::invalid_argument("locate_forward: range belongs to a different index");
+    if (!bwt_->sa || bwt_->sa_intv <= 0)
+        throw std::logic_error("locate_forward requires the BWA sampled suffix array");
+
+    const Interval interval = range.is_single()
+        ? range.interval()
+        : range.primary_interval();
+    std::vector<uint64_t> positions;
+    positions.reserve(static_cast<size_t>(interval.size()));
+    for (bwtint_t row = static_cast<bwtint_t>(interval.l);
+         row < static_cast<bwtint_t>(interval.r); ++row) {
+        const bwtint_t coordinate = bwt_sa(bwt_, row);
+        if (coordinate < bwt_->seq_len)
+            positions.push_back(static_cast<uint64_t>(coordinate));
+    }
     return positions;
 }
 

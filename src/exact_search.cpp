@@ -6,6 +6,45 @@
 
 namespace {
 
+#if defined(FM_BENCH_SINGLETON_NOINLINE)
+#define FM_SINGLETON_HELPER_ATTR __attribute__((noinline))
+#else
+#if defined(FM_BENCH_SINGLETON_ALWAYS_INLINE)
+#define FM_SINGLETON_HELPER_ATTR inline __attribute__((always_inline))
+#else
+#define FM_SINGLETON_HELPER_ATTR inline
+#endif
+#endif
+
+static FM_SINGLETON_HELPER_ATTR
+SA_Range singleton_extension_body(
+    const BwaFMDIndex& index,
+    const SA_Range& range,
+    uint8_t bwt_c)
+{
+    const bwt_t* bwt = index.bwt();
+    const Interval interval = range.interval();
+    const bwtint_t row = static_cast<bwtint_t>(interval.l);
+    const bwtint_t rank_end = row == 0
+        ? static_cast<bwtint_t>(-1)
+        : row - 1;
+    const bwtint_t rank = bwt_occ(bwt, rank_end, bwt_c);
+    const bwtint_t start = bwt->L2[bwt_c] + 1 + rank;
+
+    bool matches = false;
+    if (row != bwt->primary) {
+        const bwtint_t packed_row = row - (row > bwt->primary);
+        matches = static_cast<uint8_t>(bwt_B0(bwt, packed_row)) == bwt_c;
+    }
+
+    const bwtint_t end = matches ? start + 1 : start;
+    return SA_Range::single(
+        &index,
+        Interval{static_cast<uint64_t>(start), static_cast<uint64_t>(end)},
+        range.orientation());
+}
+#undef FM_SINGLETON_HELPER_ATTR
+
 uint8_t base_code(char c)
 {
     switch (c) {
@@ -232,6 +271,20 @@ SA_Range extend_paired_one(
 
 } // namespace
 
+#if defined(FM_BENCH_SINGLETON_NOINLINE) || defined(FM_BENCH_SINGLETON_ALWAYS_INLINE)
+SA_Range bench_singleton_extend_left(
+    const BwaFMDIndex& index,
+    const SA_Range& range,
+    uint8_t c)
+{
+    if (index.rank_backend() == RankBackend::Bwa &&
+        !range.empty() && range.is_single() && range.size() == 1 &&
+        range.orientation() == SA_Range::Orientation::Left)
+        return singleton_extension_body(index, range, c);
+    return index.extend_left(range, c);
+}
+#endif
+
 namespace {
 
 SA_Range search_exact_impl(
@@ -277,9 +330,20 @@ SA_Range search_exact_impl(
             range = extend_paired_one(
                 index, range, c, direction, false);
         } else {
+#if !defined(FM_BENCH_SINGLETON_BASELINE)
+            if (direction == Direction::Left &&
+                index.rank_backend() == RankBackend::Bwa && range.is_single() &&
+                range.size() == 1)
+                range = singleton_extension_body(index, range, c);
+            else
+                range = direction == Direction::Right
+                    ? index.extend_right(range, c)
+                    : index.extend_left(range, c);
+#else
             range = direction == Direction::Right
                 ? index.extend_right(range, c)
                 : index.extend_left(range, c);
+#endif
         }
 
         range.set_position(
@@ -329,6 +393,59 @@ SA_Range search_exact_unidirectional(
 {
     return SA_Range::search_exact(
         index, read, direction, SA_Range::Mode::Single);
+}
+
+namespace {
+uint16_t sixmer_key(const std::string& read, size_t start)
+{
+    uint16_t key = 0;
+    for (size_t i = 0; i < 6; ++i)
+        key = static_cast<uint16_t>((key << 2) | base_code(read[start + i]));
+    return key;
+}
+}
+
+ExactSearch6merTable::ExactSearch6merTable(const BwaFMDIndex& index)
+    : index_(&index)
+{
+    static constexpr char bases[] = "ACGT";
+    for (uint16_t key = 0; key < intervals_.size(); ++key) {
+        std::string seed(6, 'A');
+        uint16_t value = key;
+        for (int i = 5; i >= 0; --i) {
+            seed[static_cast<size_t>(i)] = bases[value & 3];
+            value >>= 2;
+        }
+        intervals_[key] = search_exact_unidirectional(index, seed, Direction::Left).interval();
+    }
+}
+
+SA_Range ExactSearch6merTable::search(const BwaFMDIndex& index, const std::string& read) const
+{
+    if (index_ != &index)
+        throw std::invalid_argument("6-mer table belongs to a different BWT index");
+    if (read.size() < 6)
+        return search_exact_unidirectional(index, read, Direction::Left);
+
+    const uint16_t key = sixmer_key(read, read.size() - 6);
+    const Interval seed_interval = intervals_[key];
+    // Preserve the baseline's precise empty interval bounds when the seed is
+    // absent; the baseline can stop before reaching six consumed bases.
+    if (seed_interval.empty())
+        return search_exact_unidirectional(index, read, Direction::Left);
+
+    SA_Range range = SA_Range::single(&index, seed_interval, SA_Range::Orientation::Left);
+    range.set_position(5);
+    range.set_valid(true);
+    range.set_unidirectional(true);
+    for (size_t pos = read.size() - 6; pos > 0 && !range.empty();) {
+        --pos;
+        range = index.extend_left(range, base_code(read[pos]));
+        range.set_position(static_cast<uint32_t>(read.size() - pos - 1));
+        range.set_valid(!range.empty());
+        range.set_unidirectional(true);
+    }
+    return range;
 }
 
 SA_Range search_exact_bidirectional(
