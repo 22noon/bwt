@@ -3,6 +3,9 @@
 
 #include <cstdint>
 #include <stdexcept>
+#if defined(FM_BENCH_SINGLETON_RUN_LOOP_TRACE)
+#include <vector>
+#endif
 
 namespace {
 
@@ -292,7 +295,11 @@ SA_Range search_exact_impl(
     const std::string& read,
     Direction direction,
     bool bidirectional,
-    const char* empty_message)
+    const char* empty_message
+#if defined(FM_BENCH_SINGLETON_RUN_LOOP_TRACE)
+    , std::vector<SA_Range>* trace = nullptr
+#endif
+    )
 {
     if (read.empty())
         throw std::invalid_argument(empty_message);
@@ -313,7 +320,64 @@ SA_Range search_exact_impl(
     range.set_position(0);
     range.set_valid(!range.empty());
     range.set_unidirectional(true);
+#if defined(FM_BENCH_SINGLETON_RUN_LOOP_TRACE)
+    if (trace)
+        trace->push_back(range);
+#endif
 
+#if defined(FM_BENCH_SINGLETON_RUN_LOOP)
+    size_t consumed = 1;
+    while (consumed < read.size() && !range.empty()) {
+        const size_t pos = scan_right
+            ? consumed
+            : read.size() - consumed - 1;
+        uint8_t c = base_code(read[pos]);
+
+        if (!bidirectional && direction == Direction::Left &&
+            index.rank_backend() == RankBackend::Bwa && range.is_single() &&
+            range.size() == 1) {
+            // A singleton extension can only produce an empty interval or a
+            // singleton interval. Once eligible, keep extending directly
+            // without repeating generic mode/direction/backend/cardinality
+            // dispatch; empty is the only loop condition needed.
+            while (true) {
+                range = singleton_extension_body(index, range, c);
+                range.set_position(static_cast<uint32_t>(consumed));
+                range.set_valid(!range.empty());
+                range.set_unidirectional(true);
+#if defined(FM_BENCH_SINGLETON_RUN_LOOP_TRACE)
+                if (trace)
+                    trace->push_back(range);
+#endif
+                ++consumed;
+                if (range.empty() || consumed >= read.size())
+                    break;
+                const size_t next_pos = scan_right
+                    ? consumed
+                    : read.size() - consumed - 1;
+                c = base_code(read[next_pos]);
+            }
+            continue;
+        }
+
+        if (bidirectional) {
+            range = extend_paired_one(
+                index, range, c, direction, false);
+        } else {
+            range = direction == Direction::Right
+                ? index.extend_right(range, c)
+                : index.extend_left(range, c);
+        }
+        range.set_position(static_cast<uint32_t>(consumed));
+        range.set_valid(!range.empty());
+        range.set_unidirectional(true);
+#if defined(FM_BENCH_SINGLETON_RUN_LOOP_TRACE)
+        if (trace)
+            trace->push_back(range);
+#endif
+        ++consumed;
+    }
+#else
     for (size_t consumed = 1;
          consumed < read.size() && !range.empty();
          ++consumed) {
@@ -350,12 +414,35 @@ SA_Range search_exact_impl(
             static_cast<uint32_t>(consumed));
         range.set_valid(!range.empty());
         range.set_unidirectional(true);
+#if defined(FM_BENCH_SINGLETON_RUN_LOOP_TRACE)
+        if (trace)
+            trace->push_back(range);
+#endif
     }
+#endif
 
     return range;
 }
 
 } // namespace
+
+#if defined(FM_BENCH_SINGLETON_RUN_LOOP_TRACE)
+SA_Range bench_search_exact_unidirectional_trace(
+    const BwaFMDIndex& index,
+    const std::string& read,
+    Direction direction,
+    std::vector<SA_Range>& trace)
+{
+    trace.clear();
+    return search_exact_impl(
+        index,
+        read,
+        direction,
+        false,
+        "bench_search_exact_unidirectional_trace: read must not be empty",
+        &trace);
+}
+#endif
 
 
 SA_Range SA_Range::search_exact(
