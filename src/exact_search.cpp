@@ -325,7 +325,10 @@ SA_Range search_exact_impl(
         trace->push_back(range);
 #endif
 
-#if defined(FM_BENCH_SINGLETON_RUN_LOOP)
+#if !defined(FM_BENCH_SINGLETON_STEP_BASELINE)
+    // Production uses a dedicated run loop once the eligible BWA left-singleton
+    // state is reached. The separately compiled baseline keeps the prior
+    // per-step dispatch for controlled comparisons.
     size_t consumed = 1;
     while (consumed < read.size() && !range.empty()) {
         const size_t pos = scan_right
@@ -394,7 +397,6 @@ SA_Range search_exact_impl(
             range = extend_paired_one(
                 index, range, c, direction, false);
         } else {
-#if !defined(FM_BENCH_SINGLETON_BASELINE)
             if (direction == Direction::Left &&
                 index.rank_backend() == RankBackend::Bwa && range.is_single() &&
                 range.size() == 1)
@@ -403,11 +405,6 @@ SA_Range search_exact_impl(
                 range = direction == Direction::Right
                     ? index.extend_right(range, c)
                     : index.extend_left(range, c);
-#else
-            range = direction == Direction::Right
-                ? index.extend_right(range, c)
-                : index.extend_left(range, c);
-#endif
         }
 
         range.set_position(

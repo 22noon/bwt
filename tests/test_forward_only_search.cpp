@@ -66,6 +66,18 @@ bool same_interval(const SA_Range& a, const SA_Range& b)
     return ai.l == bi.l && ai.r == bi.r;
 }
 
+// Use for two BWA paths, where empty insertion points are part of the
+// extension result and must remain identical step by step.
+bool same_single_interval_bounds(const SA_Range& a, const SA_Range& b)
+{
+    if (!a.is_single() || !b.is_single() ||
+        a.orientation() != b.orientation())
+        return false;
+    const Interval ai = a.interval();
+    const Interval bi = b.interval();
+    return ai.l == bi.l && ai.r == bi.r;
+}
+
 bool check(const BwaFMDIndex& index, const BwaFMDIndex& batmis_index,
            const BwaFMDIndex& batmis_fast_index,
            const std::string& reference,
@@ -81,7 +93,7 @@ bool check(const BwaFMDIndex& index, const BwaFMDIndex& batmis_index,
     std::vector<SA_Range> run_loop_trace;
     const SA_Range traced_range = bench_search_exact_unidirectional_trace(
         index, query, Direction::Left, run_loop_trace);
-    if (!same_interval(range, traced_range)) {
+    if (!same_single_interval_bounds(range, traced_range)) {
         std::cerr << "Run-loop traced result differs from normal run-loop search for "
                   << query << '\n';
         return false;
@@ -160,7 +172,7 @@ bool check(const BwaFMDIndex& index, const BwaFMDIndex& batmis_index,
     for (size_t step = 0; step < generic_trace.size(); ++step) {
         const SA_Range& actual = run_loop_trace[step];
         const SA_Range& expected_step = generic_trace[step];
-        if (!same_interval(actual, expected_step) ||
+        if (!same_single_interval_bounds(actual, expected_step) ||
             actual.index() != expected_step.index() ||
             actual.is_single() != expected_step.is_single() ||
             actual.orientation() != expected_step.orientation() ||
@@ -176,7 +188,7 @@ bool check(const BwaFMDIndex& index, const BwaFMDIndex& batmis_index,
         }
     }
 #endif
-    if (!same_interval(range, step_bwa)) {
+    if (!same_single_interval_bounds(range, step_bwa)) {
         std::cerr << "Production exact-search interval differs from generic "
                   << "extend_left() baseline for query " << query
                   << ": optimized [" << range.interval().l << ','

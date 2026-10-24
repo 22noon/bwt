@@ -94,39 +94,29 @@ endif()
 # This option is separate from BUILD_BENCHMARKS because it builds isolated
 # exact-search benchmark variants without changing any regular target.
 if(BUILD_SINGLETON_INLINE_BENCHMARKS)
-  # The run-loop variant is an isolated exact-search benchmark control. The
-  # regular fmsearch and fm_range targets keep the existing per-step path.
-  add_library(fm_range_singleton_run_loop STATIC ${FM_RANGE_SOURCES})
-  target_include_directories(fm_range_singleton_run_loop PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include ${BWA_API_DIR})
-  target_compile_definitions(fm_range_singleton_run_loop PRIVATE FM_BENCH_SINGLETON_RUN_LOOP)
-  target_compile_options(fm_range_singleton_run_loop PRIVATE -O3 -DNDEBUG)
-  target_link_libraries(fm_range_singleton_run_loop PUBLIC bwa_bwt_prod ZLIB::ZLIB)
-  add_executable(fmsearch_singleton_run_loop src/fmsearch.cpp src/sam_output.cpp)
-  target_include_directories(fmsearch_singleton_run_loop PRIVATE ${HTSLIB_INCLUDE_DIR})
-  target_link_libraries(fmsearch_singleton_run_loop PRIVATE
-    fm_range_singleton_run_loop ${HTSLIB_LINK_LIBRARIES})
-  target_compile_options(fmsearch_singleton_run_loop PRIVATE -O3 -DNDEBUG)
-
-  # This duplicate is used only by correctness tests to expose per-step state;
-  # the timed run-loop executable has no tracing branch in its inner loop.
+  # Test-only build of the production run loop with per-step state capture.
+  # Timed production fmsearch is compiled without trace code.
   add_library(fm_range_singleton_run_loop_trace STATIC ${FM_RANGE_SOURCES})
   target_include_directories(fm_range_singleton_run_loop_trace PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include ${BWA_API_DIR})
-  target_compile_definitions(fm_range_singleton_run_loop_trace PRIVATE
-    FM_BENCH_SINGLETON_RUN_LOOP FM_BENCH_SINGLETON_RUN_LOOP_TRACE)
+  target_compile_definitions(fm_range_singleton_run_loop_trace PRIVATE FM_BENCH_SINGLETON_RUN_LOOP_TRACE)
   target_compile_options(fm_range_singleton_run_loop_trace PRIVATE -O3 -DNDEBUG)
   target_link_libraries(fm_range_singleton_run_loop_trace PUBLIC bwa_bwt_prod ZLIB::ZLIB)
   target_compile_definitions(test_forward_only_search PRIVATE
     FM_BENCH_SINGLETON_RUN_LOOP_TRACE)
   target_link_libraries(test_forward_only_search PRIVATE fm_range_singleton_run_loop_trace)
-  target_link_libraries(test_exact_search PRIVATE fm_range_singleton_run_loop)
+  target_link_libraries(test_exact_search PRIVATE fm_range_prod)
 
-  # Preserve the pre-optimization A control after production adopts the
-  # singleton path. It differs only by compiling the generic dispatch branch.
+  # Pre-promotion control for production comparisons. It retains the previous
+  # one-step singleton dispatch and disables only the dedicated run loop.
   add_library(fm_range_singleton_baseline STATIC ${FM_RANGE_SOURCES})
   target_include_directories(fm_range_singleton_baseline PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include ${BWA_API_DIR})
-  target_compile_definitions(fm_range_singleton_baseline PRIVATE FM_BENCH_SINGLETON_BASELINE)
+  target_compile_definitions(fm_range_singleton_baseline PRIVATE FM_BENCH_SINGLETON_STEP_BASELINE)
   target_compile_options(fm_range_singleton_baseline PRIVATE -O3 -DNDEBUG)
   target_link_libraries(fm_range_singleton_baseline PUBLIC bwa_bwt_prod ZLIB::ZLIB)
+  add_executable(fmsearch_singleton_baseline src/fmsearch.cpp src/sam_output.cpp)
+  target_include_directories(fmsearch_singleton_baseline PRIVATE ${HTSLIB_INCLUDE_DIR})
+  target_link_libraries(fmsearch_singleton_baseline PRIVATE fm_range_singleton_baseline ${HTSLIB_LINK_LIBRARIES})
+  target_compile_options(fmsearch_singleton_baseline PRIVATE -O3 -DNDEBUG)
 
   add_executable(bench_singleton_inline_a benchmark/bench_singleton_inline.cpp)
   target_compile_definitions(bench_singleton_inline_a PRIVATE BENCH_VARIANT_NAME="A-baseline")
@@ -216,7 +206,7 @@ if(BUILD_SINGLETON_INLINE_BENCHMARKS)
       "$<TARGET_FILE:fmsearch>" "$<TARGET_FILE:write_forward_only_sa>"
       "${BWA_INDEX_EXECUTABLE}" "${TEST_FIXTURE_ROOT}/forward-sam"
       "$<TARGET_FILE:test_forward_only_search>"
-      "$<TARGET_FILE:fmsearch_singleton_run_loop>")
+      "$<TARGET_FILE:fmsearch_singleton_baseline>")
 else()
   add_test(NAME test_fmsearch_forward_sam
     COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_fmsearch_forward_sam.sh"
