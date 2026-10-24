@@ -118,6 +118,18 @@ if(BUILD_SINGLETON_INLINE_BENCHMARKS)
   target_link_libraries(fmsearch_singleton_baseline PRIVATE fm_range_singleton_baseline ${HTSLIB_LINK_LIBRARIES})
   target_compile_options(fmsearch_singleton_baseline PRIVATE -O3 -DNDEBUG)
 
+  # Isolated control for the multi-row native BWA extension optimization:
+  # keep the production singleton run loop and disable only multi-row dispatch.
+  add_library(fm_range_singleton_only STATIC ${FM_RANGE_SOURCES})
+  target_include_directories(fm_range_singleton_only PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include ${BWA_API_DIR})
+  target_compile_definitions(fm_range_singleton_only PRIVATE FM_BENCH_DISABLE_MULTIROW_FAST_PATH)
+  target_compile_options(fm_range_singleton_only PRIVATE -O3 -DNDEBUG)
+  target_link_libraries(fm_range_singleton_only PUBLIC bwa_bwt_prod ZLIB::ZLIB)
+  add_executable(fmsearch_singleton_run_loop_only src/fmsearch.cpp src/sam_output.cpp)
+  target_include_directories(fmsearch_singleton_run_loop_only PRIVATE ${HTSLIB_INCLUDE_DIR})
+  target_link_libraries(fmsearch_singleton_run_loop_only PRIVATE fm_range_singleton_only ${HTSLIB_LINK_LIBRARIES})
+  target_compile_options(fmsearch_singleton_run_loop_only PRIVATE -O3 -DNDEBUG)
+
   add_executable(bench_singleton_inline_a benchmark/bench_singleton_inline.cpp)
   target_compile_definitions(bench_singleton_inline_a PRIVATE BENCH_VARIANT_NAME="A-baseline")
   target_link_libraries(bench_singleton_inline_a PRIVATE fm_range_singleton_baseline)

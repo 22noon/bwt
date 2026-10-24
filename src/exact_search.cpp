@@ -46,6 +46,31 @@ SA_Range singleton_extension_body(
         Interval{static_cast<uint64_t>(start), static_cast<uint64_t>(end)},
         range.orientation());
 }
+
+static inline Interval multirow_extension_body(
+    const BwaFMDIndex& index,
+    const Interval& interval,
+    uint8_t bwt_c)
+{
+    const bwt_t* bwt = index.bwt();
+
+    // bwt_2occ() takes inclusive BWT row endpoints. Represent the prefix
+    // before row zero explicitly as BWA's unsigned -1 sentinel.
+    const bwtint_t left_end = interval.l == 0
+        ? static_cast<bwtint_t>(-1)
+        : static_cast<bwtint_t>(interval.l - 1);
+    const bwtint_t right_end = static_cast<bwtint_t>(interval.r - 1);
+
+    bwtint_t before = 0;
+    bwtint_t through = 0;
+    bwt_2occ(bwt, left_end, right_end, bwt_c, &before, &through);
+
+    const bwtint_t offset = bwt->L2[bwt_c] + 1;
+    return Interval{
+        static_cast<uint64_t>(offset + before),
+        static_cast<uint64_t>(offset + through)
+    };
+}
 #undef FM_SINGLETON_HELPER_ATTR
 
 uint8_t base_code(char c)
@@ -363,6 +388,36 @@ SA_Range search_exact_impl(
             continue;
         }
 
+#if !defined(FM_BENCH_DISABLE_MULTIROW_FAST_PATH)
+        if (!bidirectional && direction == Direction::Left &&
+            index.rank_backend() == RankBackend::Bwa && range.is_single() &&
+            range.size() > 1) {
+            // Stay in the native paired-rank path while the child remains
+            // multi-row. A singleton is handed back to the singleton loop on
+            // the next outer iteration; an empty child terminates the search.
+            Interval interval = range.interval();
+            const SA_Range::Orientation single_orientation = range.orientation();
+            while (true) {
+                interval = multirow_extension_body(index, interval, c);
+                range = SA_Range::single(
+                    &index, interval, single_orientation);
+                range.set_position(static_cast<uint32_t>(consumed));
+                range.set_valid(!range.empty());
+                range.set_unidirectional(true);
+#if defined(FM_BENCH_SINGLETON_RUN_LOOP_TRACE)
+                if (trace)
+                    trace->push_back(range);
+#endif
+                ++consumed;
+                if (interval.size() <= 1 ||
+                    consumed >= read.size())
+                    break;
+                c = base_code(read[read.size() - consumed - 1]);
+            }
+            continue;
+        }
+#endif
+
         if (bidirectional) {
             range = extend_paired_one(
                 index, range, c, direction, false);
@@ -438,6 +493,17 @@ SA_Range bench_search_exact_unidirectional_trace(
         false,
         "bench_search_exact_unidirectional_trace: read must not be empty",
         &trace);
+}
+
+SA_Range bench_multirow_extend_left(
+    const BwaFMDIndex& index,
+    const SA_Range& range,
+    uint8_t c)
+{
+    return SA_Range::single(
+        &index,
+        multirow_extension_body(index, range.interval(), c),
+        range.orientation());
 }
 #endif
 

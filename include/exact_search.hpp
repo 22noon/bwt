@@ -20,6 +20,12 @@ SA_Range bench_search_exact_unidirectional_trace(
     const std::string& read,
     Direction direction,
     std::vector<SA_Range>& trace);
+
+// Test-only differential hook for the native multi-row left-extension body.
+SA_Range bench_multirow_extend_left(
+    const BwaFMDIndex& index,
+    const SA_Range& range,
+    uint8_t c);
 #endif
 
 #if defined(FM_BENCH_SINGLETON_NOINLINE) || defined(FM_BENCH_SINGLETON_ALWAYS_INLINE)

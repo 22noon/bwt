@@ -12,6 +12,16 @@
 #include <vector>
 
 namespace {
+#if defined(FM_BENCH_SINGLETON_RUN_LOOP_TRACE)
+uint64_t traced_multirow_extensions = 0;
+uint64_t traced_multirow_continuations = 0;
+uint64_t traced_multirow_to_singleton = 0;
+uint64_t traced_multirow_to_empty = 0;
+uint64_t multirow_interval_extensions = 0;
+uint64_t multirow_row_zero_cases = 0;
+uint64_t multirow_primary_spanning_cases = 0;
+#endif
+
 std::string read_reference(const std::string& path)
 {
     std::ifstream in(path);
@@ -169,6 +179,19 @@ bool check(const BwaFMDIndex& index, const BwaFMDIndex& batmis_index,
                   << ", generic " << generic_trace.size() << '\n';
         return false;
     }
+    for (size_t step = 1; step < generic_trace.size(); ++step) {
+        const SA_Range& before = generic_trace[step - 1];
+        const SA_Range& after = generic_trace[step];
+        if (before.size() > 1) {
+            ++traced_multirow_extensions;
+            if (after.empty())
+                ++traced_multirow_to_empty;
+            else if (after.size() == 1)
+                ++traced_multirow_to_singleton;
+            else
+                ++traced_multirow_continuations;
+        }
+    }
     for (size_t step = 0; step < generic_trace.size(); ++step) {
         const SA_Range& actual = run_loop_trace[step];
         const SA_Range& expected_step = generic_trace[step];
@@ -312,6 +335,43 @@ int main(int argc, char** argv)
                 ++single_steps;
             }
         }
+#if defined(FM_BENCH_SINGLETON_RUN_LOOP_TRACE)
+        const uint64_t row_count = static_cast<uint64_t>(bwt->seq_len) + 1;
+        for (uint64_t left = 0; left < row_count; ++left) {
+            for (uint64_t right = left + 2; right <= row_count; ++right) {
+                const SA_Range parent = SA_Range::single(
+                    &index, {left, right}, SA_Range::Orientation::Left);
+                const bool spans_primary =
+                    left <= static_cast<uint64_t>(bwt->primary) &&
+                    static_cast<uint64_t>(bwt->primary) < right;
+                for (uint8_t c = 0; c < 4; ++c) {
+                    const SA_Range expected = index.extend_left(parent, c);
+                    const SA_Range actual =
+                        bench_multirow_extend_left(index, parent, c);
+                    if (!same_single_interval_bounds(actual, expected) ||
+                        actual.index() != expected.index() ||
+                        actual.is_single() != expected.is_single() ||
+                        actual.orientation() != expected.orientation() ||
+                        actual.position() != expected.position() ||
+                        actual.valid() != expected.valid() ||
+                        actual.is_unidirectional() != expected.is_unidirectional()) {
+                        std::cerr << "Multi-row extension mismatch for interval ["
+                                  << left << ',' << right << "), base "
+                                  << static_cast<unsigned>(c) << ": expected ["
+                                  << expected.interval().l << ','
+                                  << expected.interval().r << "), actual ["
+                                  << actual.interval().l << ','
+                                  << actual.interval().r << ")\n";
+                        bwt_destroy(bwt);
+                        return 1;
+                    }
+                    ++multirow_interval_extensions;
+                    multirow_row_zero_cases += left == 0;
+                    multirow_primary_spanning_cases += spans_primary;
+                }
+            }
+        }
+#endif
         uint64_t tested = 0;
         std::string query;
         for (size_t length = 1; length <= 6; ++length)
@@ -355,8 +415,24 @@ int main(int argc, char** argv)
                 }
             }
         }
+#if defined(FM_BENCH_SINGLETON_RUN_LOOP_TRACE)
+        if (!traced_multirow_extensions || !traced_multirow_continuations ||
+            !traced_multirow_to_singleton || !traced_multirow_to_empty ||
+            !multirow_row_zero_cases || !multirow_primary_spanning_cases) {
+            throw std::runtime_error(
+                "forward-only fixture did not cover all multi-row extension states");
+        }
+#endif
         std::cout << "Passed: " << tested << " queries tested; "
                   << single_steps << " singleton-symbol extensions checked\n";
+#if defined(FM_BENCH_SINGLETON_RUN_LOOP_TRACE)
+        std::cout << "Multi-row differential: " << multirow_interval_extensions
+                  << " interval/base requests; " << traced_multirow_extensions
+                  << " traced steps (" << traced_multirow_continuations
+                  << " remain multi-row, " << traced_multirow_to_singleton
+                  << " become singleton, " << traced_multirow_to_empty
+                  << " become empty)\n";
+#endif
         bwt_destroy(bwt);
         return 0;
     } catch (const std::exception& e) {
